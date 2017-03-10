@@ -9,12 +9,13 @@ import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 from tensorflow.python.ops import variable_scope as vs
+from flags import *
 
 from evaluate import exact_match_score, f1_score
 
 logging.basicConfig(level=logging.INFO)
 
-#FLAGS = tf.app.flags.FLAGS
+FLAGS = get_flags()
 
 def get_optimizer(opt):
     if opt == "adam":
@@ -43,7 +44,7 @@ class Encoder(object):
         masks, and an initial
         hidden state input into this function.
 
-        :param inputs: Symbolic representations of your input
+        :param inputs: Symbolic representations of your input (i.e. input placeholders)
         :param masks: this is to make sure tf.nn.dynamic_rnn doesn't iterate
                       through masked steps
         :param encoder_state_input: (Optional) pass this as initial hidden state
@@ -90,12 +91,19 @@ class QASystem(object):
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
             self.setup_embeddings()
-            self.setup_system()
-            self.setup_loss()
+            self.setup_system() # = add_prediction_op()
+            self.setup_loss() # = add_loss_op()
 
         # ==== set up training/updating procedure ====
+        # TODO: add training_op(self.loss) 
         pass
 
+    def add_training_op(self, loss):
+        # create Adam optimizer 
+        # optimizer.compute_gradients (optional)
+        # do gradient clipping (optional)
+        # call optimizer.minimize_loss() or apply_gradients if we chose to do clipping
+        pass
 
     def setup_system(self):
         """
@@ -103,6 +111,11 @@ class QASystem(object):
         you should call various functions inside encoder, decoder here
         to assemble your reading comprehension system!
         :return:
+
+
+        TODO:
+            pass the embedded version of input_placeholders to Encoder.encode and get the H matrix and encoded question out
+
         """
         raise NotImplementedError("Connect all parts of your system here!")
 
@@ -113,6 +126,7 @@ class QASystem(object):
         :return:
         """
         with vs.variable_scope("loss"):
+            # See slide 9
             pass
 
     def setup_embeddings(self):
@@ -134,6 +148,7 @@ class QASystem(object):
         # fill in this feed_dictionary like:
         # input_feed['train_x'] = train_x
 
+        # self.train_op, self.loss, self.grad_norm
         output_feed = []
 
         outputs = session.run(output_feed, input_feed)
@@ -198,7 +213,7 @@ class QASystem(object):
         valid_cost = 0
 
         for valid_x, valid_y in valid_dataset:
-          valid_cost = self.test(sess, valid_x, valid_y)
+            valid_cost = self.test(sess, valid_x, valid_y)
 
 
         return valid_cost
@@ -256,6 +271,11 @@ class QASystem(object):
         # you will also want to save your model parameters in train_dir
         # so that you can use your trained model to make predictions, or
         # even continue training
+
+        # See q3_gru.py fit() function @ line 180
+        # TODO: For loop over epochs:
+        #           For loop over minibatch:
+        #               Call train_on_batch = optimize (see above)
 
         tic = time.time()
         params = tf.trainable_variables()
