@@ -49,8 +49,22 @@ class Encoder(object):
                  or both.
         """
 
-        outputs_q, output_states_q = tf.nn.bidirectional_dynamic_rnn(tf.contrib.rnn.LSTMCell, tf.contrib.rnn.LSTMCell, q_data, q_lens, dtype = tf.float32)
-        outputs_c, output_states_c = tf.nn.bidirectional_dynamic_rnn(tf.contrib.rnn.LSTMCell, tf.contrib.rnn.LSTMCell, c_data, c_lens, output_states_q[0], output_states_q[1])
+        '''
+        with tf.name_scope("BiLSTM"):
+          with tf.variable_scope('forward'):
+            lstm_fw_cell = tf.nn.rnn_cell.LSTMCell(hidden_size, forget_bias=1.0, state_is_tuple=True)
+          with tf.variable_scope('backward'):
+            lstm_bw_cell = tf.nn.rnn_cell.LSTMCell(hidden_size, forget_bias=1.0, state_is_tuple=True)
+          outputs, states = tf.nn.bidirectional_dynamic_rnn(cell_fw=lstm_fw_cell, cell_bw=lstm_bw_cell, inputs=input,sequence_length=seq_len, dtype=tf.float32, scope="BiLSTM")  
+  '''
+        with vs.variable_scope("forward"):
+            lstm_fw = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
+        with vs.variable_scope("backward"):
+            lstm_bw = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
+        with vs.variable_scope("encode_q"):
+            outputs_q, output_states_q = tf.nn.bidirectional_dynamic_rnn(lstm_fw, lstm_bw, q_data, q_lens, dtype = tf.float64)
+        with vs.variable_scope("encode_c"):
+            outputs_c, output_states_c = tf.nn.bidirectional_dynamic_rnn(lstm_fw, lstm_bw, c_data, c_lens, output_states_q[0], output_states_q[1])
 
         return outputs_q, outputs_c
 
@@ -89,8 +103,8 @@ class Decoder(object):
         """
 
 
-
-        return
+        # This is wrong, but I'm just trying to make it compile
+        return knowledge_rep[0], knowledge_rep[1]
 
 class QASystem(object):
     def __init__(self, encoder, decoder, *args):
@@ -101,15 +115,14 @@ class QASystem(object):
         :param decoder: a decoder that you constructed in train.py
         :param args: pass in more arguments as needed
         """
-
         self.encoder = encoder
         self.decoder = decoder
 
         # ==== set up placeholder tokens ========
         self.question_placeholder = tf.placeholder(tf.int32)
-        self.question_len_placeholder = tf.placeholder(tf.int32, shape = (None, 1))
+        self.question_len_placeholder = tf.placeholder(tf.int32, shape = (None, ))
         self.context_placeholder = tf.placeholder(tf.int32)
-        self.context_len_placeholder = tf.placeholder(tf.int32, shape = (None, 1))
+        self.context_len_placeholder = tf.placeholder(tf.int32, shape = (None, ))
         self.start_answer = tf.placeholder(tf.int32)
         self.end_answer = tf.placeholder(tf.int32)
 
@@ -141,7 +154,7 @@ class QASystem(object):
 
         """
         encoded_q, encoded_c = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
-
+        self.a_s, self.a_e = self.decoder.decode((encoded_q, encoded_c))
 
     def setup_loss(self):
         """
@@ -149,8 +162,8 @@ class QASystem(object):
         :return:
         """
         with vs.variable_scope("loss"):
-            l1 = tf.reduce_mean(tt.nn.sparse_softmax_cross_entropy_with_logits(self.a_s, self.start_answer))
-            l2 = tf.reduce_mean(tt.nn.sparse_softmax_cross_entropy_with_logits(self.a_e, self.end_answer))
+            l1 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.a_s, labels = self.start_answer))
+            l2 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.a_e, labels = self.end_answer))
             loss = l1 + l2
         return loss
 
