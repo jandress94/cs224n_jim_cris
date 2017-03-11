@@ -19,13 +19,13 @@ tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (
 tf.app.flags.DEFINE_integer("print_every", 1, "How many iterations to do per print.")
 tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicates keep all.")
 tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
-tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
+tf.app.flags.DEFINE_string("embed_path", "./data/squad/glove.trimmed.", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
 tf.app.flags.DEFINE_string("dev_path", "data/squad/dev-v1.1.json", "Path to the JSON dev set to evaluate against (default: ./data/squad/dev-v1.1.json)")
 
 # preprocessing
-tf.app.flags.DEFINE_integer("context_len", 200, "The length we will clip/pad a context paragraph to")
-tf.app.flags.DEFINE_integer("question_len", 60, "The length we will clip/pad a question to")
-tf.app.flags.DEFINE_integer("padding_token", -1, "The symbol that is inserted in order to pad questions / contexts to the correct length")
+tf.app.flags.DEFINE_integer("max_context_len", 200, "The length we will clip/pad a context paragraph to")
+# tf.app.flags.DEFINE_integer("question_len", 60, "The length we will clip/pad a question to")
+tf.app.flags.DEFINE_integer("padding_token", 0, "The symbol that is inserted in order to pad questions / contexts to the correct length")
 
 def get_flags():
 	return tf.app.flags.FLAGS 
