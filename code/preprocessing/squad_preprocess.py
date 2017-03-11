@@ -12,15 +12,57 @@ import random
 from collections import Counter
 from six.moves.urllib.request import urlretrieve
 
+from flags import *
+
 reload(sys)
 sys.setdefaultencoding('utf8')
 random.seed(42)
 np.random.seed(42)
 
+FLAGS = get_flags()
+
 squad_base_url = "https://rajpurkar.github.io/SQuAD-explorer/dataset/"
 
 # Size train: 30288272
 # size dev: 4854279
+
+def read_file(filename):
+    f = open(filename)
+    data = []
+    for line in f:
+        data.append([int(val) for val in line.split()])
+    f.close()
+    return data
+
+def clipPad(datalist, maxLen):
+    clipPadData = []
+    lengths = []
+    for data in datalist:
+        L = len(data)
+        if L >= maxLen:
+            clipPadData.append(data[0 : maxLen])
+        else:
+            clipPadData.append(data + [FLAGS.padding_token] * (maxLen - L))
+
+        # TODO: quite possible that we want this to only be L in the else case and want it to be maxLen in the if case
+        lengths.append(L)
+    return clipPadData, lengths
+
+def load_train_data(data_dir, isValidation = False, useClippingPadding = True):
+    prefix = 'val' if isValidation else 'train'
+    question_data = read_file(os.path.join(data_dir, prefix + '.ids.question'))
+    context_data = read_file(os.path.join(data_dir, prefix + '.ids.context'))
+    answer_data = read_file(os.path.join(data_dir, prefix + '.span'))
+
+    lengths = {}
+
+    if clipPad:
+        question_data, question_lengths = clipPad(question_data, FLAGS.question_len)
+        context_data, context_lengths = clipPad(context_data, FLAGS.context_len)
+        lengths["question"] = question_lengths
+        lengths["context"] = context_lengths
+
+    return question_data, context_data, answer_data, lengths
 
 def reporthook(t):
   """https://github.com/tqdm/tqdm"""
