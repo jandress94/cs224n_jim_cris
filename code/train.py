@@ -203,11 +203,10 @@ def main(_):
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
-    question_data, context_data, answer_data, lengths = load_train_data(FLAGS.data_dir, isValidation = False, useClippingPadding = True)
+    print("Loading training data")
+    question_data, context_data, answer_data = load_train_data(FLAGS.data_dir, isValidation = False, useClippingPadding = True)
     print(question_data[0])
-    print(lengths["question"][0])
     print(context_data[0])
-    print(lengths["context"][0])
     print(answer_data[0])
 
 

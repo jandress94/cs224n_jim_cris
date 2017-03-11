@@ -49,7 +49,7 @@ class Encoder(object):
                  or both.
         """
 
-        outputs_q, output_states_q = tf.nn.bidirectional_dynamic_rnn(tf.contrib.rnn.LSTMCell, tf.contrib.rnn.LSTMCell, q_data, q_lens, dtype = float32)
+        outputs_q, output_states_q = tf.nn.bidirectional_dynamic_rnn(tf.contrib.rnn.LSTMCell, tf.contrib.rnn.LSTMCell, q_data, q_lens, dtype = tf.float32)
         outputs_c, output_states_c = tf.nn.bidirectional_dynamic_rnn(tf.contrib.rnn.LSTMCell, tf.contrib.rnn.LSTMCell, c_data, c_lens, output_states_q[0], output_states_q[1])
 
         return outputs_q, outputs_c
@@ -140,7 +140,7 @@ class QASystem(object):
             pass the embedded version of input_placeholders to Encoder.encode and get the H matrix and encoded question out
 
         """
-        encoded_q, encoded_c = encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
+        encoded_q, encoded_c = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
 
 
     def setup_loss(self):
@@ -160,7 +160,9 @@ class QASystem(object):
         :return:
         """
         with vs.variable_scope("embeddings"):
-            embedding_matrix = tf.constant(np.load(FLAGS.embed_path + str(FLAGS.embedding_size) + ".npz"))
+            embeddings_file = np.load(FLAGS.embed_path + str(FLAGS.embedding_size) + ".npz")
+            embedding_matrix = tf.constant(embeddings_file['glove'])
+            embeddings_file.close()
 
             embeddings_q = tf.nn.embedding_lookup(embedding_matrix, self.question_placeholder)
             embeddings_q = tf.reshape(embeddings_q, (-1, tf.shape(self.question_placeholder)[1], FLAGS.embedding_size))
