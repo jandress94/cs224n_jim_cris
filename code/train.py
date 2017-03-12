@@ -204,12 +204,10 @@ def main(_):
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
     print("Loading training data")
-    question_data, context_data, answer_data = load_train_data(FLAGS.data_dir, isValidation = False, useClippingPadding = True)
-    print(question_data[0])
-    print(context_data[0])
-    print(answer_data[0])
-
-
+    dataset = load_train_data(FLAGS.data_dir, isValidation = False, useClippingPadding = True)
+    # print(question_data[0])
+    # print(context_data[0])
+    # print(answer_data[0])
 
 
     # dev_dirname = os.path.dirname(os.path.abspath(FLAGS.data_dir))
@@ -232,7 +230,7 @@ def main(_):
     #plt.savefig('answer_data_mean.png')
 
 
-
+    print("Building Model Graph")
 
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     decoder = Decoder(output_size=FLAGS.output_size)

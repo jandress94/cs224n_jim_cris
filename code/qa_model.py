@@ -57,37 +57,46 @@ class Encoder(object):
             lstm_bw_cell = tf.nn.rnn_cell.LSTMCell(hidden_size, forget_bias=1.0, state_is_tuple=True)
           outputs, states = tf.nn.bidirectional_dynamic_rnn(cell_fw=lstm_fw_cell, cell_bw=lstm_bw_cell, inputs=input,sequence_length=seq_len, dtype=tf.float32, scope="BiLSTM")  
   '''
-        with vs.variable_scope("forward"):
+        with vs.variable_scope("forward_encode"):
             lstm_fw = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
-        with vs.variable_scope("backward"):
+        with vs.variable_scope("backward_encode"):
             lstm_bw = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
         with vs.variable_scope("encode_q"):
             outputs_q, output_states_q = tf.nn.bidirectional_dynamic_rnn(lstm_fw, lstm_bw, q_data, q_lens, dtype = tf.float64)
         with vs.variable_scope("encode_c"):
             outputs_c, output_states_c = tf.nn.bidirectional_dynamic_rnn(lstm_fw, lstm_bw, c_data, c_lens, output_states_q[0], output_states_q[1])
 
-        return outputs_q, outputs_c
+        return output_states_q, outputs_c
 
-# class GRUAttnCell(tf.contrib.rnn.GRUCell):
-#     def __init__(self, num_units, encoder_output, scope = None):
-#         self.hs = encoder_output
-#         super(GRUAttnCell, self).__init__(num_units)
+class GRUAttnCell(tf.contrib.rnn.GRUCell):
+    def __init__(self, num_units, encoder_output, scope = None):
+        self.hs = encoder_output
+        super(GRUAttnCell, self).__init__(num_units)
 
-#     def __call__(self, inputs, state, scope = None):
-#         gru_out, gru_state = super(GRUAttnCell, self).__call__(inputs, state, scope)
-#         with vs.variable_scope(scope or type(self).__name__):
-#             with vs.variable_scope("Attn"):
-#                 ht = tf.contrib.rnn.rnn_cell._linear(gru_out, self._num_units, True, 1.0)
-#                 ht = tf.expand_dims(ht, axis = 1)
-#             scores = tf.reduce_sum(self.hs * ht, reduction_indices = 2, keep_dims = True)
-#             context = tf.reduce_sum(self.hs * scores, reduction_indices = 1)
-#             with vs.variable_scope("AttnConcat"):
-#                 out = tf.nn.relu(tf.contrib.rnn.rnn_cell._linear([context, gru_out], self._num_units, True, 1.0))
-#         return (out, out)
+    def __call__(self, inputs, state, scope = None):
+        gru_out, gru_state = super(GRUAttnCell, self).__call__(inputs, state, scope)
+        with vs.variable_scope(scope or type(self).__name__):
+            with vs.variable_scope("Attn"):
+                ht = tf.contrib.rnn.rnn_cell._linear(gru_out, self._num_units, True, 1.0)
+                ht = tf.expand_dims(ht, axis = 1)
+            scores = tf.reduce_sum(self.hs * ht, reduction_indices = 2, keep_dims = True)
+            context = tf.reduce_sum(self.hs * scores, reduction_indices = 1)
+            with vs.variable_scope("AttnConcat"):
+                out = tf.nn.relu(tf.contrib.rnn.rnn_cell._linear([context, gru_out], self._num_units, True, 1.0))
+        return (out, out)
 
 class Decoder(object):
     def __init__(self, output_size):
         self.output_size = output_size
+
+
+    def concat_fw_bw(self, tensor):
+        """
+        tensor has shape (2, ....., h)
+        result should be of shape (......, 2h)
+        """
+        fw_bw_list = tf.unstack(tensor, axis = 0)
+        return tf.concat(fw_bw_list, axis = -1)
 
     def decode(self, knowledge_rep):
         """
@@ -101,10 +110,33 @@ class Decoder(object):
                               decided by how you choose to implement the encoder
         :return:
         """
+        encoded_q_states_ch, encoded_c, c_lens = knowledge_rep                  # encoded_q_states_ch = R(2, 2, m, h)       encoded_c = R(2, m, w, h)
+        encoded_q_states_h = tf.unstack(encoded_q_states_ch, axis = 1)[1]       # = R(2, m, h)
 
+        concatted_q = self.concat_fw_bw(encoded_q_states_h)                     # = R(m, 2h)
+        concatted_c = self.concat_fw_bw(encoded_c)                              # = R(m, w, 2h)
+
+        attention_scores = tf.matmul(concatted_c, tf.expand_dims(concatted_q, axis = -1))   # expanded_dim = R(m, 2h, 1)        attention_scores = R(m, w, 1)
+        # attention_scores = tf.squeeze(attention_scores)
+        attention_weights = tf.nn.softmax(attention_scores, dim = 1)            # = R(m, w, 1)
+        scaled_context = concatted_c * attention_weights                        # = R(m, w, 2h)
+
+        # scaled_context.set_shape([None, None, FLAGS.state_size])
+
+        with vs.variable_scope("decode_cell"):
+            lstm = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
+        with vs.variable_scope("decode_rnn"):
+            outputs, _ = tf.nn.dynamic_rnn(lstm, scaled_context, c_lens, dtype = tf.float64)        # = R(m, w, h)
+
+        U = tf.get_variable("U", dtype = tf.float64, shape = (FLAGS.state_size, 2), initializer = tf.contrib.layers.xavier_initializer())   # = R(h, 2)
+        b = tf.get_variable("b", dtype = tf.float64, shape = (2, ), initializer = tf.contrib.layers.xavier_initializer())                   # = R(2)
+
+        answer_unnormed_probs = tf.reshape(tf.matmul(tf.reshape(outputs, (-1, FLAGS.state_size)), U), (tf.shape(outputs)[0], -1, 2))    # inner reshape = R(mw, h)      matmul = R(mw, 2)   outer reshape = R(m, w, 2)
+
+        #todo: add in b
 
         # This is wrong, but I'm just trying to make it compile
-        return knowledge_rep[0], knowledge_rep[1]
+        return knowledge_rep[0], knowledge_rep[1], tf.shape(outputs), tf.shape(answer_unnormed_probs), answer_unnormed_probs[0, 0, :]
 
 class QASystem(object):
     def __init__(self, encoder, decoder, *args):
@@ -153,8 +185,8 @@ class QASystem(object):
             pass the embedded version of input_placeholders to Encoder.encode and get the H matrix and encoded question out
 
         """
-        encoded_q, encoded_c = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
-        self.a_s, self.a_e = self.decoder.decode((encoded_q, encoded_c))
+        encoded_q_states, encoded_c = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
+        self.a_s, self.a_e, self.output1, self.output2, self.output3 = self.decoder.decode((encoded_q_states, encoded_c, self.context_len_placeholder))
 
     def setup_loss(self):
         """
@@ -202,6 +234,8 @@ class QASystem(object):
 
         a_data = np.array(a_data)
 
+
+        # can change to tf.one_hot
         starts[xrange(a_data.shape[0]), a_data[:, 0]] = 1
         ends[xrange(a_data.shape[0]), a_data[:, 1]] = 1
 
@@ -212,9 +246,11 @@ class QASystem(object):
         # input_feed['train_x'] = train_x
 
         # self.train_op, self.loss, self.grad_norm
-        output_feed = []
+        output_feed = [self.output1, self.output2, self.output3]
 
         outputs = session.run(output_feed, input_feed)
+
+        print(outputs)
 
         return outputs
 
@@ -352,21 +388,22 @@ class QASystem(object):
         question_data, context_data, answer_data = dataset
 
         for epoch in xrange(FLAGS.epochs):
-            logging.info("epoch #", epoch)
+            logging.info("epoch %d" % epoch)
             if epoch % FLAGS.print_every == 0:
                 #TODO: print the current F1 / EM / cost / training error
                 pass
 
-            for minibatchIdx in xrange(np.ceil(len(question_data) / FLAGS.batch_size)):
+            for minibatchIdx in xrange(int(np.ceil(len(question_data) / FLAGS.batch_size))):
                 tic = time.time()
 
                 mini_question_data, question_lengths = padClip(question_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], np.inf)
                 mini_context_data, context_lengths = padClip(context_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], FLAGS.max_context_len)
                 mini_answer_data = answer_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size]
 
-                optimize(session, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
+                self.optimize(session, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
 
                 toc = time.time()
-                logging.info("Minibatch took %f secs" % (toc - tic))
+                if minibatchIdx == 0:
+                    logging.info("Minibatch took %f secs" % (toc - tic))
 
             #TODO: save model

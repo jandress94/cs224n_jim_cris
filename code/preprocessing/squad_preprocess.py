@@ -57,6 +57,16 @@ def load_train_data(data_dir, isValidation = False, useClippingPadding = True):
     context_data = read_file(os.path.join(data_dir, prefix + '.ids.context'))
     answer_data = read_file(os.path.join(data_dir, prefix + '.span'))
 
+    print("There are %d training examples to begin with" % len(question_data))
+
+    for i in xrange(len(question_data) - 1, -1, -1):
+        #TODO: check if this can be just > not >=
+        if answer_data[i][1] >= FLAGS.max_context_len:
+            del answer_data[i]
+            del question_data[i]
+            del context_data[i]
+    print("There are %d training examples remaining after deleting those with answers cutoff by max content length %d" % (len(question_data), FLAGS.max_context_len))
+
     return question_data, context_data, answer_data
 
 def reporthook(t):
