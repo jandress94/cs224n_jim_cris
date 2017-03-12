@@ -241,11 +241,11 @@ class QASystem(object):
 
         outputs = session.run(output_feed, input_feed)
 
-        print(outputs)
+        #print(outputs)
 
         return outputs
 
-    def test(self, session, context_data_val, question_data_val, answer_data_val):
+    def test(self, session, context_data_val, question_data_val, answer_data_val=None):
         """
         in here you should compute a cost for your validation set
         and tune your hyperparameters according to the validation set performance
@@ -257,9 +257,10 @@ class QASystem(object):
         input_feed[self.context_placeholder] = [context_data_val]
         input_feed[self.context_len_placeholder] = [len(context_data_val)]
 
-        answers = np.zeros((1, len(context_data_val)))
-        answers[0, answer_data_val[0] : answer_data_val[1] + 1] = 1
-        input_feed[self.answers_placeholder] = answers
+        if answer_data_val is not None:
+            answers = np.zeros((1, len(context_data_val)))
+            answers[0, answer_data_val[0] : answer_data_val[1] + 1] = 1
+            input_feed[self.answers_placeholder] = answers
 
         masks = [[True] * len(context_data_val)]
         input_feed[self.context_mask_placeholder] = masks
@@ -267,7 +268,10 @@ class QASystem(object):
         # fill in this feed_dictionary like:
         # input_feed['valid_x'] = valid_x
 
-        output_feed = [self.preds, self.loss] 
+        output_feed = [self.preds] 
+
+        if answer_data_val is not None:
+            output_feed.append(self.loss)
 
         outputs = session.run(output_feed, input_feed)
 
@@ -390,6 +394,10 @@ class QASystem(object):
         # so that you can use your trained model to make predictions, or
         # even continue training
 
+        self.saver = tf.train.Saver()
+
+        lowest_cost = np.inf 
+
         tic = time.time()
         params = tf.trainable_variables()
         num_params = sum(map(lambda t: np.prod(tf.shape(t.value()).eval()), params))
@@ -398,10 +406,14 @@ class QASystem(object):
 
         question_data, context_data, answer_data = dataset_train
 
+        scores = self.validate(session, dataset_val)
+        logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
+        if scores[0] < lowest_cost:
+            lowest_cost = scores[0]
+            self.saver.save(session, FLAGS.train_dir + "/model.weights") 
+
         for epoch in xrange(FLAGS.epochs):
             logging.info("epoch %d" % epoch)
-            if epoch % FLAGS.print_every == 0:
-                logging.info("Validation cost is %f, F1 is %f, EM is %f" % self.validate(session, dataset_val))
 
             for minibatchIdx in xrange(int(np.ceil(len(question_data) / FLAGS.batch_size))):
                 tic = time.time()
@@ -416,4 +428,9 @@ class QASystem(object):
                 if minibatchIdx == 0:
                     logging.info("Minibatch took %f secs" % (toc - tic))
 
-            #TODO: save model
+            if epoch % FLAGS.print_every == 0:
+                scores = self.validate(session, dataset_val)
+                logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
+                if scores[0] < lowest_cost:
+                    lowest_cost = scores[0]
+                    self.saver.save(session, FLAGS.train_dir + "/model.weights") 

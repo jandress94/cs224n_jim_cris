@@ -16,7 +16,7 @@ import tensorflow as tf
 
 from qa_model import Encoder, QASystem, Decoder
 from preprocessing.squad_preprocess import data_from_json, maybe_download, squad_base_url, \
-    invert_map, tokenize, token_idx_map
+    invert_map, tokenize, token_idx_map, load_train_data
 import qa_data
 
 import logging
@@ -45,7 +45,8 @@ def initialize_model(session, model, train_dir):
     v2_path = ckpt.model_checkpoint_path + ".index" if ckpt else ""
     if ckpt and (tf.gfile.Exists(ckpt.model_checkpoint_path) or tf.gfile.Exists(v2_path)):
         logging.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-        model.saver.restore(session, ckpt.model_checkpoint_path)
+        #model.saver.restore(session, ckpt.model_checkpoint_path)
+        tf.train.Saver().restore(session, ckpt.model_checkpoint_path)
     else:
         logging.info("Created model with fresh parameters.")
         session.run(tf.global_variables_initializer())
@@ -91,11 +92,13 @@ def read_dataset(dataset, tier, vocab):
                 question_tokens = tokenize(question)
                 question_uuid = qas[qid]['id']
 
-                context_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in context_tokens]
-                qustion_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in question_tokens]
+                context_ids = [vocab.get(w, qa_data.UNK_ID) for w in context_tokens]
+                question_ids = [vocab.get(w, qa_data.UNK_ID) for w in question_tokens]
 
-                context_data.append(' '.join(context_ids))
-                query_data.append(' '.join(qustion_ids))
+                #context_data.append(' '.join(context_ids))
+                #query_data.append(' '.join(question_ids))
+                context_data.append(context_ids)
+                query_data.append(question_ids)
                 question_uuid_data.append(question_uuid)
 
     return context_data, query_data, question_uuid_data
@@ -130,7 +133,18 @@ def generate_answers(sess, model, dataset, rev_vocab):
     :param rev_vocab: this is a list of vocabulary that maps index to actual words
     :return:
     """
+    context_data, question_data, question_uuid_data = dataset
+
     answers = {}
+    for i in xrange(len(context_data)):
+        uuid = question_uuid_data[i]
+        preds = model.test(sess, context_data[i], question_data[i])[0]
+        preds = np.squeeze(preds)
+        buff = []
+        for j in xrange(preds.shape[0]):
+            if preds[j, 1] >= preds[j, 0]:
+                buff.append(rev_vocab[context_data[i][j]])
+        answers[uuid] = ' '.join(buff)
 
     return answers
 
@@ -168,7 +182,7 @@ def main(_):
 
     # ========= Load Dataset =========
     # You can change this code to load dataset in your own way
-
+    
     dev_dirname = os.path.dirname(os.path.abspath(FLAGS.dev_path))
     dev_filename = os.path.basename(FLAGS.dev_path)
     context_data, question_data, question_uuid_data = prepare_dev(dev_dirname, dev_filename, vocab)
