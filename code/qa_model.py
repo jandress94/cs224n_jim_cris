@@ -131,12 +131,9 @@ class Decoder(object):
         U = tf.get_variable("U", dtype = tf.float64, shape = (FLAGS.state_size, 2), initializer = tf.contrib.layers.xavier_initializer())   # = R(h, 2)
         b = tf.get_variable("b", dtype = tf.float64, shape = (2, ), initializer = tf.contrib.layers.xavier_initializer())                   # = R(2)
 
-        answer_unnormed_probs = tf.reshape(tf.matmul(tf.reshape(outputs, (-1, FLAGS.state_size)), U), (tf.shape(outputs)[0], -1, 2))    # inner reshape = R(mw, h)      matmul = R(mw, 2)   outer reshape = R(m, w, 2)
+        answer_unnormed_probs = tf.reshape(tf.matmul(tf.reshape(outputs, (-1, FLAGS.state_size)), U), (tf.shape(outputs)[0], -1, 2)) + b   # inner reshape = R(mw, h)      matmul = R(mw, 2)   outer reshape = R(m, w, 2)
 
-        #todo: add in b
-
-        # This is wrong, but I'm just trying to make it compile
-        return knowledge_rep[0], knowledge_rep[1], tf.shape(outputs), tf.shape(answer_unnormed_probs), answer_unnormed_probs[0, 0, :]
+        return answer_unnormed_probs
 
 class QASystem(object):
     def __init__(self, encoder, decoder, *args):
@@ -155,8 +152,9 @@ class QASystem(object):
         self.question_len_placeholder = tf.placeholder(tf.int32, shape = (None, ))
         self.context_placeholder = tf.placeholder(tf.int32)
         self.context_len_placeholder = tf.placeholder(tf.int32, shape = (None, ))
-        self.start_answer = tf.placeholder(tf.int32)
-        self.end_answer = tf.placeholder(tf.int32)
+        self.context_mask_placeholder = tf.placeholder(tf.bool, shape = (None, None))
+
+        self.answers_placeholder = tf.placeholder(tf.int32)
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
@@ -186,7 +184,7 @@ class QASystem(object):
 
         """
         encoded_q_states, encoded_c = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
-        self.a_s, self.a_e, self.output1, self.output2, self.output3 = self.decoder.decode((encoded_q_states, encoded_c, self.context_len_placeholder))
+        self.preds = self.decoder.decode((encoded_q_states, encoded_c, self.context_len_placeholder))
 
     def setup_loss(self):
         """
@@ -194,9 +192,13 @@ class QASystem(object):
         :return:
         """
         with vs.variable_scope("loss"):
-            l1 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.a_s, labels = self.start_answer))
-            l2 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.a_e, labels = self.end_answer))
-            loss = l1 + l2
+            # l1 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.a_s, labels = self.start_answer))
+            # l2 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.a_e, labels = self.end_answer))
+            # loss = l1 + l2
+
+            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels = self.answers_placeholder, logits = self.preds)
+            loss = tf.boolean_mask(loss, self.context_mask_placeholder)
+            loss = tf.reduce_mean(loss)   
         return loss
 
     def setup_embeddings(self):
@@ -229,24 +231,31 @@ class QASystem(object):
         input_feed[self.context_placeholder] = c_data
         input_feed[self.context_len_placeholder] = c_lens
 
-        starts = np.zeros((len(c_data), len(c_data[0])))
-        ends = np.zeros((len(c_data), len(c_data[0])))
-
+        answers = np.zeros((len(c_data), len(c_data[0])))
         a_data = np.array(a_data)
+        for m in xrange(a_data.shape[0]):
+            answers[m, a_data[m, 0] : a_data[m, 1] + 1] = 1
+        input_feed[self.answers_placeholder] = answers
 
+        masks = [[True] * L + [False] * (len(c_data[0]) - L) for L in c_lens]
+        input_feed[self.context_mask_placeholder] = masks
 
-        # can change to tf.one_hot
-        starts[xrange(a_data.shape[0]), a_data[:, 0]] = 1
-        ends[xrange(a_data.shape[0]), a_data[:, 1]] = 1
+        # starts = np.zeros((len(c_data), len(c_data[0])))
+        # ends = np.zeros((len(c_data), len(c_data[0])))
 
-        input_feed[self.start_answer] = starts
-        input_feed[self.end_answer] = ends
+        # # can change to tf.one_hot
+        # starts[xrange(a_data.shape[0]), a_data[:, 0]] = 1
+        # ends[xrange(a_data.shape[0]), a_data[:, 1]] = 1
+
+        # input_feed[self.start_answer] = starts
+        # input_feed[self.end_answer] = ends
 
         # fill in this feed_dictionary like:
         # input_feed['train_x'] = train_x
 
         # self.train_op, self.loss, self.grad_norm
-        output_feed = [self.output1, self.output2, self.output3]
+        output_feed = [self.train_op, self.loss]            # to train
+        # output_feed = [self.loss]                           # to not train
 
         outputs = session.run(output_feed, input_feed)
 
