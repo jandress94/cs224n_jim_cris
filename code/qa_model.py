@@ -177,11 +177,6 @@ class QASystem(object):
         you should call various functions inside encoder, decoder here
         to assemble your reading comprehension system!
         :return:
-
-
-        TODO:
-            pass the embedded version of input_placeholders to Encoder.encode and get the H matrix and encoded question out
-
         """
         encoded_q_states, encoded_c = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
         self.preds = self.decoder.decode((encoded_q_states, encoded_c, self.context_len_placeholder))
@@ -240,19 +235,6 @@ class QASystem(object):
         masks = [[True] * L + [False] * (len(c_data[0]) - L) for L in c_lens]
         input_feed[self.context_mask_placeholder] = masks
 
-        # starts = np.zeros((len(c_data), len(c_data[0])))
-        # ends = np.zeros((len(c_data), len(c_data[0])))
-
-        # # can change to tf.one_hot
-        # starts[xrange(a_data.shape[0]), a_data[:, 0]] = 1
-        # ends[xrange(a_data.shape[0]), a_data[:, 1]] = 1
-
-        # input_feed[self.start_answer] = starts
-        # input_feed[self.end_answer] = ends
-
-        # fill in this feed_dictionary like:
-        # input_feed['train_x'] = train_x
-
         # self.train_op, self.loss, self.grad_norm
         output_feed = [self.train_op, self.loss]            # to train
         # output_feed = [self.loss]                           # to not train
@@ -263,18 +245,29 @@ class QASystem(object):
 
         return outputs
 
-    def test(self, session, valid_x, valid_y):
+    def test(self, session, context_data_val, question_data_val, answer_data_val):
         """
         in here you should compute a cost for your validation set
         and tune your hyperparameters according to the validation set performance
         :return:
         """
         input_feed = {}
+        input_feed[self.question_placeholder] = [question_data_val]
+        input_feed[self.question_len_placeholder] = [len(question_data_val)]
+        input_feed[self.context_placeholder] = [context_data_val]
+        input_feed[self.context_len_placeholder] = [len(context_data_val)]
+
+        answers = np.zeros((1, len(context_data_val)))
+        answers[0, answer_data_val[0] : answer_data_val[1] + 1] = 1
+        input_feed[self.answers_placeholder] = answers
+
+        masks = [[True] * len(context_data_val)]
+        input_feed[self.context_mask_placeholder] = masks
 
         # fill in this feed_dictionary like:
         # input_feed['valid_x'] = valid_x
 
-        output_feed = []
+        output_feed = [self.preds, self.loss] 
 
         outputs = session.run(output_feed, input_feed)
 
@@ -318,15 +311,27 @@ class QASystem(object):
 
         :return:
         """
-        valid_cost = 0
+        valid_cost = 0.
+        f1_total = 0.
+        em_total = 0.
 
-        for valid_x, valid_y in valid_dataset:
-            valid_cost = self.test(sess, valid_x, valid_y)
+        question_data_val, context_data_val, answer_data_val = valid_dataset
+        for i in xrange(len(answer_data_val)):
+            if i % 100 == 0:
+                logging.info("Computing scores for dev example %d / %d" % (i, len(answer_data_val)))
+            preds, loss = self.test(sess, context_data_val[i], question_data_val[i], answer_data_val[i])
+            valid_cost += loss
+            preds = np.squeeze(preds)
+            f1, em = self.evaluate_answer(preds, answer_data_val[i])
+            f1_total += f1
+            em_total += em 
 
+        f1_total /= len(answer_data_val)
+        em_total /= len(answer_data_val) 
 
-        return valid_cost
+        return valid_cost, 100*f1_total, 100*em_total
 
-    def evaluate_answer(self, session, dataset, sample=100, log=False):
+    def evaluate_answer(self, preds, answer_data_val):
         """
         Evaluate the model's performance using the harmonic mean of F1 and Exact Match (EM)
         with the set of true answer labels
@@ -343,14 +348,19 @@ class QASystem(object):
         """
 
         f1 = 0.
-        em = 0.
 
-        if log:
-            logging.info("F1: {}, EM: {}, for {} samples".format(f1, em, sample))
+        on_words = set([j for j in xrange(preds.shape[0]) if preds[j, 1] >= preds[j, 0]])
+        true_on_words = set(xrange(answer_data_val[0], answer_data_val[1] + 1))
+        num_same = len(on_words & true_on_words)
+        if num_same != 0:
+            precision = 1.0 * num_same / len(on_words)
+            recall = 1.0 * num_same / len(true_on_words)
+            f1 = 2 * precision * recall / (precision + recall)
+        em = 1 if on_words == true_on_words else 0
 
         return f1, em
 
-    def train(self, session, dataset, train_dir):
+    def train(self, session, dataset_train, dataset_val, train_dir):
         """
         Implement main training loop
 
@@ -386,21 +396,12 @@ class QASystem(object):
         toc = time.time()
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
 
-        # See q3_gru.py fit() function @ line 180
-        # TODO: For loop over epochs:
-        #           For loop over minibatch:
-        #               pad minibatch based on max length in minibatch
-        #               Call train_on_batch = optimize (see above)
-
-        #dataset = (question, context, answer)
-
-        question_data, context_data, answer_data = dataset
+        question_data, context_data, answer_data = dataset_train
 
         for epoch in xrange(FLAGS.epochs):
             logging.info("epoch %d" % epoch)
             if epoch % FLAGS.print_every == 0:
-                #TODO: print the current F1 / EM / cost / training error
-                pass
+                logging.info("Validation cost is %f, F1 is %f, EM is %f" % self.validate(session, dataset_val))
 
             for minibatchIdx in xrange(int(np.ceil(len(question_data) / FLAGS.batch_size))):
                 tic = time.time()

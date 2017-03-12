@@ -204,7 +204,9 @@ def main(_):
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
     print("Loading training data")
-    dataset = load_train_data(FLAGS.data_dir, isValidation = False, useClippingPadding = True)
+    dataset_train = load_train_data(FLAGS.data_dir, isValidation = False)
+    print("Loading validation data")
+    dataset_val = load_train_data(FLAGS.data_dir, isValidation = True)
     # print(question_data[0])
     # print(context_data[0])
     # print(answer_data[0])
@@ -251,9 +253,9 @@ def main(_):
         initialize_model(sess, qa, load_train_dir)
 
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
-        qa.train(sess, dataset, save_train_dir)
+        qa.train(sess, dataset_train, dataset_val, save_train_dir)
 
-        qa.evaluate_answer(sess, dataset, vocab, FLAGS.evaluate, log=True)
+        qa.evaluate_answer(sess, dataset_val, vocab, FLAGS.evaluate, log=True)
 
 if __name__ == "__main__":
     tf.app.run()
