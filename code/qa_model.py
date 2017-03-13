@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 import time
+from datetime import datetime
 import logging
 
 import numpy as np
@@ -193,7 +194,7 @@ class QASystem(object):
 
             loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels = self.answers_placeholder, logits = self.preds)
             loss = tf.boolean_mask(loss, self.context_mask_placeholder)
-            loss = tf.reduce_mean(loss)   
+            loss = tf.reduce_sum(loss)   
         return loss
 
     def setup_embeddings(self):
@@ -241,36 +242,35 @@ class QASystem(object):
 
         outputs = session.run(output_feed, input_feed)
 
-        #print(outputs)
+        print(outputs)
 
         return outputs
 
-    def test(self, session, context_data_val, question_data_val, answer_data_val=None):
+    def test(self, session, q_data, q_lens, c_data, c_lens, a_data = None):
         """
         in here you should compute a cost for your validation set
         and tune your hyperparameters according to the validation set performance
         :return:
         """
         input_feed = {}
-        input_feed[self.question_placeholder] = [question_data_val]
-        input_feed[self.question_len_placeholder] = [len(question_data_val)]
-        input_feed[self.context_placeholder] = [context_data_val]
-        input_feed[self.context_len_placeholder] = [len(context_data_val)]
+        input_feed[self.question_placeholder] = q_data
+        input_feed[self.question_len_placeholder] = q_lens
+        input_feed[self.context_placeholder] = c_data
+        input_feed[self.context_len_placeholder] = c_lens
 
-        if answer_data_val is not None:
-            answers = np.zeros((1, len(context_data_val)))
-            answers[0, answer_data_val[0] : answer_data_val[1] + 1] = 1
+        if a_data is not None:
+            answers = np.zeros((len(c_data), len(c_data[0])))
+            a_data = np.array(a_data)
+            for m in xrange(a_data.shape[0]):
+                answers[m, a_data[m, 0] : a_data[m, 1] + 1] = 1
             input_feed[self.answers_placeholder] = answers
 
-        masks = [[True] * len(context_data_val)]
+        masks = [[True] * L + [False] * (len(c_data[0]) - L) for L in c_lens]
         input_feed[self.context_mask_placeholder] = masks
-
-        # fill in this feed_dictionary like:
-        # input_feed['valid_x'] = valid_x
 
         output_feed = [self.preds] 
 
-        if answer_data_val is not None:
+        if a_data is not None:
             output_feed.append(self.loss)
 
         outputs = session.run(output_feed, input_feed)
@@ -320,15 +320,24 @@ class QASystem(object):
         em_total = 0.
 
         question_data_val, context_data_val, answer_data_val = valid_dataset
-        for i in xrange(len(answer_data_val)):
-            if i % 100 == 0:
-                logging.info("Computing scores for dev example %d / %d" % (i, len(answer_data_val)))
-            preds, loss = self.test(sess, context_data_val[i], question_data_val[i], answer_data_val[i])
+
+        num_minibatches = int(np.ceil(len(question_data_val) / FLAGS.batch_size))
+
+        for minibatchIdx in xrange(num_minibatches):
+            if minibatchIdx % max(int(num_minibatches / FLAGS.print_times_per_validate), 1) == 0:
+                logging.info("Completed validation minibatch %d / %d at time %s" % (minibatchIdx, num_minibatches, str(datetime.now())))
+
+            mini_question_data, question_lengths = padClip(question_data_val[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], np.inf)
+            mini_context_data, context_lengths = padClip(context_data_val[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], np.inf)     #TODO: do we want this as inf too?
+            mini_answer_data = answer_data_val[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size]
+
+            preds, loss = self.test(sess, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
             valid_cost += loss
-            preds = np.squeeze(preds)
-            f1, em = self.evaluate_answer(preds, answer_data_val[i])
-            f1_total += f1
-            em_total += em 
+
+            for i in xrange(preds.shape[0]):
+                f1, em = self.evaluate_answer(preds[i, 0:context_lengths[i]], mini_answer_data[i])
+                f1_total += f1
+                em_total += em
 
         f1_total /= len(answer_data_val)
         em_total /= len(answer_data_val) 
@@ -412,10 +421,14 @@ class QASystem(object):
             lowest_cost = scores[0]
             self.saver.save(session, FLAGS.train_dir + "/model.weights") 
 
+        num_minibatches = int(np.ceil(len(question_data) / FLAGS.batch_size))
+
         for epoch in xrange(FLAGS.epochs):
             logging.info("epoch %d" % epoch)
 
-            for minibatchIdx in xrange(int(np.ceil(len(question_data) / FLAGS.batch_size))):
+            for minibatchIdx in xrange(num_minibatches):
+                if minibatchIdx % max(int(num_minibatches / FLAGS.print_times_per_epoch), 1) == 0:
+                    logging.info("Completed minibatch %d / %d at time %s" % (minibatchIdx, num_minibatches, str(datetime.now())))
                 tic = time.time()
 
                 mini_question_data, question_lengths = padClip(question_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], np.inf)
@@ -428,7 +441,7 @@ class QASystem(object):
                 if minibatchIdx == 0:
                     logging.info("Minibatch took %f secs" % (toc - tic))
 
-            if epoch % FLAGS.print_every == 0:
+            if epoch % FLAGS.print_every_num_epochs == 0:
                 scores = self.validate(session, dataset_val)
                 logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
                 if scores[0] < lowest_cost:

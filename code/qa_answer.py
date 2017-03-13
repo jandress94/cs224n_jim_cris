@@ -137,6 +137,8 @@ def generate_answers(sess, model, dataset, rev_vocab):
 
     answers = {}
     for i in xrange(len(context_data)):
+        if i % 10 == 0:
+            logging.info("Generating answer for example %d / %d" % (i, len(context_data)))
         uuid = question_uuid_data[i]
         preds = model.test(sess, context_data[i], question_data[i])[0]
         preds = np.squeeze(preds)
