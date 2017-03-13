@@ -28,6 +28,13 @@ def get_optimizer(opt):
         assert (False)
     return optfn
 
+def concat_fw_bw(tensor):
+    """
+    tensor has shape (2, ....., h)
+    result will be of shape (......, 2h)
+    """
+    fw_bw_list = tf.unstack(tensor, axis = 0)
+    return tf.concat(fw_bw_list, axis = -1)
 
 class Encoder(object):
     def __init__(self, size, vocab_dim):
@@ -50,14 +57,66 @@ class Encoder(object):
                  or both.
         """
 
-        '''
-        with tf.name_scope("BiLSTM"):
-          with tf.variable_scope('forward'):
-            lstm_fw_cell = tf.nn.rnn_cell.LSTMCell(hidden_size, forget_bias=1.0, state_is_tuple=True)
-          with tf.variable_scope('backward'):
-            lstm_bw_cell = tf.nn.rnn_cell.LSTMCell(hidden_size, forget_bias=1.0, state_is_tuple=True)
-          outputs, states = tf.nn.bidirectional_dynamic_rnn(cell_fw=lstm_fw_cell, cell_bw=lstm_bw_cell, inputs=input,sequence_length=seq_len, dtype=tf.float32, scope="BiLSTM")  
-  '''
+        with vs.variable_scope("quest_cont_encoder") as scope:
+            # = R(1, 1, 2h)
+            q_sent = tf.get_variable("q_sentinel", [1, 1, 2*FLAGS.state_size], tf.float64, tf.random_normal_initializer())
+            d_sent = tf.get_variable("d_sentinel", [1, 1, 2*FLAGS.state_size], tf.float64, tf.random_normal_initializer())
+
+             # = R(2h 2h)
+            W_Q = tf.get_variable("W_Q", [2*FLAGS.state_size, 2*FLAGS.state_size], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+            # = R(2h)
+            b_Q = tf.get_variable("b_Q", [2*FLAGS.state_size], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+
+            lstm_cell = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
+
+            # = R(2, m, w_q, h)
+            outputs_q, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, q_data, q_lens, dtype = tf.float64)
+            scope.reuse_variables()
+            # = R(2, m, w_c, h)
+            outputs_c, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, c_data, c_lens, dtype = tf.float64)
+
+            # = R(m, w_q, 2h)
+            Q_prime = concat_fw_bw(outputs_q)
+            # = R(m, w_c, 2h)
+            D = concat_fw_bw(outputs_c)
+
+            # = R(m, 1, 2h)
+            q_sent_tile = tf.tile(q_sent, [tf.shape(Q_prime)[0], 1, 1])
+            d_sent_tile = tf.tile(d_sent, [tf.shape(D)[0], 1, 1])
+
+            # = R(m, w_q + 1, 2h)
+            Q_prime = tf.concat([Q_prime, q_sent_tile], axis = 1)
+            # = R(m, w_c + 1, 2h)
+            D = tf.concat([D, d_sent_tile], axis = 1)
+
+            # = R(m, w_q + 1, 2h)
+            Q = tf.tanh(tf.tensordot(Q_prime, W_Q, [[2], [0]]) + b_Q)
+
+        with vs.variable_scope("coattention_encoder"):
+            # = R(m, w_c + 1, w_q + 1)
+            L = tf.matmul(D, tf.transpose(Q, perm = [0, 2, 1]))        
+
+            # TODO: THINK ABOUT WHETHER THESE ARE RIGHT, I AM HONESTLY 50/50 ABOUT IT
+            # = R(m, w_q + 1, w_c + 1)
+            A_Q = tf.nn.softmax(tf.transpose(L, perm = [0, 2, 1]))
+            # = R(m, w_c + 1, w_q + 1)
+            A_D = tf.nn.softmax(L)
+
+            # = R(m, w_q + 1, 2h)
+            C_Q = tf.matmul(A_Q, D)
+
+            # = R(m, w_q + 1, 4h)
+            Q_CQ = tf.concat([Q, C_Q], axis = 2)
+            # = R(m, w_c + 1, 4h)
+            C_D = tf.matmul(A_D, Q_CQ)
+
+            lstm_cell = tf.contrib.rnn.BasicLSTMCell(2 * FLAGS.state_size)
+            # = R(2, m, w_c + 1, 2h)
+            U = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, asdf, asdf, dtype = tf.float64)[0]
+
+
+
+
         with vs.variable_scope("forward_encode"):
             lstm_fw = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
         with vs.variable_scope("backward_encode"):
@@ -67,37 +126,11 @@ class Encoder(object):
         with vs.variable_scope("encode_c"):
             outputs_c, output_states_c = tf.nn.bidirectional_dynamic_rnn(lstm_fw, lstm_bw, c_data, c_lens, output_states_q[0], output_states_q[1])
 
-        return output_states_q, outputs_c
-
-class GRUAttnCell(tf.contrib.rnn.GRUCell):
-    def __init__(self, num_units, encoder_output, scope = None):
-        self.hs = encoder_output
-        super(GRUAttnCell, self).__init__(num_units)
-
-    def __call__(self, inputs, state, scope = None):
-        gru_out, gru_state = super(GRUAttnCell, self).__call__(inputs, state, scope)
-        with vs.variable_scope(scope or type(self).__name__):
-            with vs.variable_scope("Attn"):
-                ht = tf.contrib.rnn.rnn_cell._linear(gru_out, self._num_units, True, 1.0)
-                ht = tf.expand_dims(ht, axis = 1)
-            scores = tf.reduce_sum(self.hs * ht, reduction_indices = 2, keep_dims = True)
-            context = tf.reduce_sum(self.hs * scores, reduction_indices = 1)
-            with vs.variable_scope("AttnConcat"):
-                out = tf.nn.relu(tf.contrib.rnn.rnn_cell._linear([context, gru_out], self._num_units, True, 1.0))
-        return (out, out)
+        return output_states_q, outputs_c, tf.shape(C_D), tf.shape(U)
 
 class Decoder(object):
     def __init__(self, output_size):
         self.output_size = output_size
-
-
-    def concat_fw_bw(self, tensor):
-        """
-        tensor has shape (2, ....., h)
-        result should be of shape (......, 2h)
-        """
-        fw_bw_list = tf.unstack(tensor, axis = 0)
-        return tf.concat(fw_bw_list, axis = -1)
 
     def decode(self, knowledge_rep):
         """
@@ -114,8 +147,8 @@ class Decoder(object):
         encoded_q_states_ch, encoded_c, c_lens = knowledge_rep                  # encoded_q_states_ch = R(2, 2, m, h)       encoded_c = R(2, m, w, h)
         encoded_q_states_h = tf.unstack(encoded_q_states_ch, axis = 1)[1]       # = R(2, m, h)
 
-        concatted_q = self.concat_fw_bw(encoded_q_states_h)                     # = R(m, 2h)
-        concatted_c = self.concat_fw_bw(encoded_c)                              # = R(m, w, 2h)
+        concatted_q = concat_fw_bw(encoded_q_states_h)                          # = R(m, 2h)
+        concatted_c = concat_fw_bw(encoded_c)                                   # = R(m, w, 2h)
 
         attention_scores = tf.matmul(concatted_c, tf.expand_dims(concatted_q, axis = -1))   # expanded_dim = R(m, 2h, 1)        attention_scores = R(m, w, 1)
         # attention_scores = tf.squeeze(attention_scores)
@@ -179,7 +212,7 @@ class QASystem(object):
         to assemble your reading comprehension system!
         :return:
         """
-        encoded_q_states, encoded_c = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
+        encoded_q_states, encoded_c, self.output1, self.output2 = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
         self.preds = self.decoder.decode((encoded_q_states, encoded_c, self.context_len_placeholder))
 
     def setup_loss(self):
@@ -237,8 +270,8 @@ class QASystem(object):
         input_feed[self.context_mask_placeholder] = masks
 
         # self.train_op, self.loss, self.grad_norm
-        output_feed = [self.train_op, self.loss]            # to train
-        # output_feed = [self.loss]                           # to not train
+        output_feed = [self.output1, self.output2]
+        # output_feed = [self.train_op, self.loss]
 
         outputs = session.run(output_feed, input_feed)
 
@@ -415,11 +448,11 @@ class QASystem(object):
 
         question_data, context_data, answer_data = dataset_train
 
-        scores = self.validate(session, dataset_val)
-        logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
-        if scores[0] < lowest_cost:
-            lowest_cost = scores[0]
-            self.saver.save(session, FLAGS.train_dir + "/model.weights") 
+        # scores = self.validate(session, dataset_val)
+        # logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
+        # if scores[0] < lowest_cost:
+        #     lowest_cost = scores[0]
+            # self.saver.save(session, FLAGS.train_dir + "/model.weights") 
 
         num_minibatches = int(np.ceil(len(question_data) / FLAGS.batch_size))
 
