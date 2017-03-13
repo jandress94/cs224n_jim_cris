@@ -494,9 +494,9 @@ class QASystem(object):
 
                 mini_indices = list(all_indices[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size])
 
-                mini_question_data, question_lengths = padClip(question_data[mini_indices], np.inf)
-                mini_context_data, context_lengths = padClip(context_data[mini_indices], FLAGS.max_context_len)
-                mini_answer_data = answer_data[mini_indices]
+                mini_question_data, question_lengths = padClip([question_data[ind] for ind in mini_indices], np.inf)
+                mini_context_data, context_lengths = padClip([context_data[ind] for ind in mini_indices], FLAGS.max_context_len)
+                mini_answer_data = [answer_data[ind] for ind in mini_indices]
 
                 _, loss = self.optimize(session, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
 
