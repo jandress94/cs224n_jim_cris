@@ -96,7 +96,7 @@ class Encoder(object):
             # = R(m, w_c + 1, w_q + 1)
             L = tf.matmul(D, tf.transpose(Q, perm = [0, 2, 1]))        
 
-            # TODO: THINK ABOUT WHETHER THESE ARE RIGHT, I AM HONESTLY 50/50 ABOUT IT
+            # TODO: THINK ABOUT WHETHER THESE ARE RIGHT, I AM HONESTLY 50/50 ABOUT IT.  THE DIM SHOULD BE 1 OR 2 FOR BOTH
             # = R(m, w_q + 1, w_c + 1)
             A_Q = tf.nn.softmax(tf.transpose(L, perm = [0, 2, 1]))
             # = R(m, w_c + 1, w_q + 1)
@@ -109,28 +109,47 @@ class Encoder(object):
             Q_CQ = tf.concat([Q, C_Q], axis = 2)
             # = R(m, w_c + 1, 4h)
             C_D = tf.matmul(A_D, Q_CQ)
+            # = R(m, w_c + 1, 6h)
+            D_CD = tf.concat([D, C_D], axis = 2)
+            D_CD.set_shape([None, None, 6*FLAGS.state_size])
 
             lstm_cell = tf.contrib.rnn.BasicLSTMCell(2 * FLAGS.state_size)
             # = R(2, m, w_c + 1, 2h)
-            U = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, asdf, asdf, dtype = tf.float64)[0]
+            U = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, D_CD, c_lens, dtype = tf.float64)[0]
+            # = R(m, w_c, 4h)
+            U = concat_fw_bw(U)[:, :-1, :]
 
-
-
-
-        with vs.variable_scope("forward_encode"):
-            lstm_fw = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
-        with vs.variable_scope("backward_encode"):
-            lstm_bw = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
-        with vs.variable_scope("encode_q"):
-            outputs_q, output_states_q = tf.nn.bidirectional_dynamic_rnn(lstm_fw, lstm_bw, q_data, q_lens, dtype = tf.float64)
-        with vs.variable_scope("encode_c"):
-            outputs_c, output_states_c = tf.nn.bidirectional_dynamic_rnn(lstm_fw, lstm_bw, c_data, c_lens, output_states_q[0], output_states_q[1])
-
-        return output_states_q, outputs_c, tf.shape(C_D), tf.shape(U)
+        return U
 
 class Decoder(object):
     def __init__(self, output_size):
         self.output_size = output_size
+
+    def build_ff_nn(self, U):
+        """
+        Takes in the context representation with dimensions (m, w_c, 4h)
+        Takes each of the w_c vectors in a minibatch and feeds it through a feed-forward neural net
+        Produces single score for each vector
+        Output has dimensions (m, w_c)
+        """
+        # = R(4h, h)
+        w_1 = tf.get_variable("w_1", [4*FLAGS.state_size, FLAGS.state_size], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+        # = R(h)
+        b_1 = tf.get_variable("b_1", [FLAGS.state_size], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+
+        # = R(m, w_c, h)
+        h = tf.sigmoid(tf.tensordot(U, w_1, [[2], [0]]) + b_1)
+
+        # = R(h)
+        w_2 = tf.get_variable("w_2", [FLAGS.state_size, 1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+        # = R
+        b_2 = tf.get_variable("b_2", [1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+
+        # = R(m, w_c, 1)
+        scores = tf.sigmoid(tf.tensordot(h, w_2, [[2], [0]]) + b_2)
+
+        # = R(m, w_c)
+        return tf.squeeze(scores)
 
     def decode(self, knowledge_rep):
         """
@@ -144,30 +163,16 @@ class Decoder(object):
                               decided by how you choose to implement the encoder
         :return:
         """
-        encoded_q_states_ch, encoded_c, c_lens = knowledge_rep                  # encoded_q_states_ch = R(2, 2, m, h)       encoded_c = R(2, m, w, h)
-        encoded_q_states_h = tf.unstack(encoded_q_states_ch, axis = 1)[1]       # = R(2, m, h)
+        # = R(m, w_c, 4h)
+        U = knowledge_rep
 
-        concatted_q = concat_fw_bw(encoded_q_states_h)                          # = R(m, 2h)
-        concatted_c = concat_fw_bw(encoded_c)                                   # = R(m, w, 2h)
+        with vs.variable_scope("start_pred_netword"):
+            start_preds = self.build_ff_nn(U)
 
-        attention_scores = tf.matmul(concatted_c, tf.expand_dims(concatted_q, axis = -1))   # expanded_dim = R(m, 2h, 1)        attention_scores = R(m, w, 1)
-        # attention_scores = tf.squeeze(attention_scores)
-        attention_weights = tf.nn.softmax(attention_scores, dim = 1)            # = R(m, w, 1)
-        scaled_context = concatted_c * attention_weights                        # = R(m, w, 2h)
+        with vs.variable_scope("end_pred_netword"):
+            end_preds = self.build_ff_nn(U)
 
-        # scaled_context.set_shape([None, None, FLAGS.state_size])
-
-        with vs.variable_scope("decode_cell"):
-            lstm = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
-        with vs.variable_scope("decode_rnn"):
-            outputs, _ = tf.nn.dynamic_rnn(lstm, scaled_context, c_lens, dtype = tf.float64)        # = R(m, w, h)
-
-        U = tf.get_variable("U", dtype = tf.float64, shape = (FLAGS.state_size, 2), initializer = tf.contrib.layers.xavier_initializer())   # = R(h, 2)
-        b = tf.get_variable("b", dtype = tf.float64, shape = (2, ), initializer = tf.contrib.layers.xavier_initializer())                   # = R(2)
-
-        answer_unnormed_probs = tf.reshape(tf.matmul(tf.reshape(outputs, (-1, FLAGS.state_size)), U), (tf.shape(outputs)[0], -1, 2)) + b   # inner reshape = R(mw, h)      matmul = R(mw, 2)   outer reshape = R(m, w, 2)
-
-        return answer_unnormed_probs
+        return start_preds, end_preds
 
 class QASystem(object):
     def __init__(self, encoder, decoder, *args):
@@ -182,13 +187,18 @@ class QASystem(object):
         self.decoder = decoder
 
         # ==== set up placeholder tokens ========
+        # = R(m, w_q)
         self.question_placeholder = tf.placeholder(tf.int32)
+        # = R(m)
         self.question_len_placeholder = tf.placeholder(tf.int32, shape = (None, ))
+        # = R(m, w_c)
         self.context_placeholder = tf.placeholder(tf.int32)
+        # = R(m)
         self.context_len_placeholder = tf.placeholder(tf.int32, shape = (None, ))
+        # = R(m, w_c)
         self.context_mask_placeholder = tf.placeholder(tf.bool, shape = (None, None))
-
-        self.answers_placeholder = tf.placeholder(tf.int32)
+        # = R(m, 2)
+        self.answers_placeholder = tf.placeholder(tf.int32, shape = (None, 2))
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
@@ -212,8 +222,13 @@ class QASystem(object):
         to assemble your reading comprehension system!
         :return:
         """
-        encoded_q_states, encoded_c, self.output1, self.output2 = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
-        self.preds = self.decoder.decode((encoded_q_states, encoded_c, self.context_len_placeholder))
+        # encoded_q_states, encoded_c, self.output1, self.output2 = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
+        # self.preds = self.decoder.decode((encoded_q_states, encoded_c, self.context_len_placeholder))
+
+        U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
+        self.start_preds, self.end_preds = self.decoder.decode(U)
+        self.output1 = tf.shape(self.start_preds)
+        self.output2 = self.start_preds[0, :]
 
     def setup_loss(self):
         """
@@ -221,13 +236,15 @@ class QASystem(object):
         :return:
         """
         with vs.variable_scope("loss"):
-            # l1 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.a_s, labels = self.start_answer))
-            # l2 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.a_e, labels = self.end_answer))
-            # loss = l1 + l2
+            l1 = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.start_preds, labels = self.answers_placeholder[:, 0])
+            # l1 = tf.boolean_mask(l1, self.context_mask_placeholder)
+            l1 = tf.reduce_sum(l1)
 
-            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels = self.answers_placeholder, logits = self.preds)
-            loss = tf.boolean_mask(loss, self.context_mask_placeholder)
-            loss = tf.reduce_sum(loss)   
+            l2 = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.end_preds, labels = self.answers_placeholder[:, 1])
+            # l2 = tf.boolean_mask(l2, self.context_mask_placeholder)
+            l2 = tf.reduce_sum(l2)
+            loss = l1 + l2
+
         return loss
 
     def setup_embeddings(self):
@@ -260,22 +277,23 @@ class QASystem(object):
         input_feed[self.context_placeholder] = c_data
         input_feed[self.context_len_placeholder] = c_lens
 
-        answers = np.zeros((len(c_data), len(c_data[0])))
-        a_data = np.array(a_data)
-        for m in xrange(a_data.shape[0]):
-            answers[m, a_data[m, 0] : a_data[m, 1] + 1] = 1
-        input_feed[self.answers_placeholder] = answers
+        # answers = np.zeros((len(c_data), len(c_data[0])))
+        # a_data = np.array(a_data)
+        # for m in xrange(a_data.shape[0]):
+        #     answers[m, a_data[m, 0] : a_data[m, 1] + 1] = 1
+        # input_feed[self.answers_placeholder] = answers
+        input_feed[self.answers_placeholder] = a_data
 
         masks = [[True] * L + [False] * (len(c_data[0]) - L) for L in c_lens]
         input_feed[self.context_mask_placeholder] = masks
 
         # self.train_op, self.loss, self.grad_norm
-        output_feed = [self.output1, self.output2]
-        # output_feed = [self.train_op, self.loss]
+        # output_feed = [self.output1, self.output2]
+        output_feed = [self.train_op, self.loss]
 
         outputs = session.run(output_feed, input_feed)
 
-        print(outputs)
+        # print(outputs)
 
         return outputs
 
@@ -291,17 +309,18 @@ class QASystem(object):
         input_feed[self.context_placeholder] = c_data
         input_feed[self.context_len_placeholder] = c_lens
 
-        if a_data is not None:
-            answers = np.zeros((len(c_data), len(c_data[0])))
-            a_data = np.array(a_data)
-            for m in xrange(a_data.shape[0]):
-                answers[m, a_data[m, 0] : a_data[m, 1] + 1] = 1
-            input_feed[self.answers_placeholder] = answers
+        # if a_data is not None:
+        #     answers = np.zeros((len(c_data), len(c_data[0])))
+        #     a_data = np.array(a_data)
+        #     for m in xrange(a_data.shape[0]):
+        #         answers[m, a_data[m, 0] : a_data[m, 1] + 1] = 1
+        #     input_feed[self.answers_placeholder] = answers
+        input_feed[self.answers_placeholder] = a_data
 
         masks = [[True] * L + [False] * (len(c_data[0]) - L) for L in c_lens]
         input_feed[self.context_mask_placeholder] = masks
 
-        output_feed = [self.preds] 
+        output_feed = [self.start_preds, self.end_preds] 
 
         if a_data is not None:
             output_feed.append(self.loss)
@@ -364,11 +383,11 @@ class QASystem(object):
             mini_context_data, context_lengths = padClip(context_data_val[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], np.inf)     #TODO: do we want this as inf too?
             mini_answer_data = answer_data_val[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size]
 
-            preds, loss = self.test(sess, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
+            start_preds, end_preds, loss = self.test(sess, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
             valid_cost += loss
 
-            for i in xrange(preds.shape[0]):
-                f1, em = self.evaluate_answer(preds[i, 0:context_lengths[i]], mini_answer_data[i])
+            for i in xrange(len(mini_question_data)):
+                f1, em = self.evaluate_answer(start_preds[i, 0:context_lengths[i]], end_preds[i, 0:context_lengths[i]], mini_answer_data[i])
                 f1_total += f1
                 em_total += em
 
@@ -377,7 +396,7 @@ class QASystem(object):
 
         return valid_cost, 100*f1_total, 100*em_total
 
-    def evaluate_answer(self, preds, answer_data_val):
+    def evaluate_answer(self, start_preds, end_preds, answer_data_val):
         """
         Evaluate the model's performance using the harmonic mean of F1 and Exact Match (EM)
         with the set of true answer labels
@@ -393,9 +412,14 @@ class QASystem(object):
         :return:
         """
 
+        start = start_preds.argmax()
+
+        end = start + end_preds[start:].argmax()
+
         f1 = 0.
 
-        on_words = set([j for j in xrange(preds.shape[0]) if preds[j, 1] >= preds[j, 0]])
+        # on_words = set([j for j in xrange(preds.shape[0]) if preds[j, 1] >= preds[j, 0]])
+        on_words = set(xrange(start, end + 1))
         true_on_words = set(xrange(answer_data_val[0], answer_data_val[1] + 1))
         num_same = len(on_words & true_on_words)
         if num_same != 0:
@@ -448,27 +472,33 @@ class QASystem(object):
 
         question_data, context_data, answer_data = dataset_train
 
-        # scores = self.validate(session, dataset_val)
-        # logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
-        # if scores[0] < lowest_cost:
-        #     lowest_cost = scores[0]
-            # self.saver.save(session, FLAGS.train_dir + "/model.weights") 
+        scores = self.validate(session, dataset_val)
+        logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
+        if scores[0] < lowest_cost:
+            lowest_cost = scores[0]
+            self.saver.save(session, FLAGS.train_dir + "/model.weights") 
 
         num_minibatches = int(np.ceil(len(question_data) / FLAGS.batch_size))
+
+        loss = 0.0
 
         for epoch in xrange(FLAGS.epochs):
             logging.info("epoch %d" % epoch)
 
+            all_indices = np.random.permutation(len(question_data))
+
             for minibatchIdx in xrange(num_minibatches):
                 if minibatchIdx % max(int(num_minibatches / FLAGS.print_times_per_epoch), 1) == 0:
-                    logging.info("Completed minibatch %d / %d at time %s" % (minibatchIdx, num_minibatches, str(datetime.now())))
+                    logging.info("Completed minibatch %d / %d at time %s, Loss was %f" % (minibatchIdx, num_minibatches, str(datetime.now()), loss))
                 tic = time.time()
 
-                mini_question_data, question_lengths = padClip(question_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], np.inf)
-                mini_context_data, context_lengths = padClip(context_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], FLAGS.max_context_len)
-                mini_answer_data = answer_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size]
+                mini_indices = all_indices[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size]
 
-                self.optimize(session, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
+                mini_question_data, question_lengths = padClip(question_data[mini_indices], np.inf)
+                mini_context_data, context_lengths = padClip(context_data[mini_indices], FLAGS.max_context_len)
+                mini_answer_data = answer_data[mini_indices]
+
+                _, loss = self.optimize(session, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
 
                 toc = time.time()
                 if minibatchIdx == 0:
