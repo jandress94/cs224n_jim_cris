@@ -141,12 +141,13 @@ def generate_answers(sess, model, dataset, rev_vocab):
             logging.info("Generating answer for example %d / %d" % (i, len(context_data)))
             
         uuid = question_uuid_data[i]
-        preds = model.test(sess, context_data[i], question_data[i])[0]
-        preds = np.squeeze(preds)
+        start_preds, end_preds = model.test(sess, [question_data[i]], [len(question_data[i])], [context_data[i]], [len(context_data[i])])
         buff = []
-        for j in xrange(preds.shape[0]):
-            if preds[j, 1] >= preds[j, 0]:
-                buff.append(rev_vocab[context_data[i][j]])
+
+        start, end = model.answer(start_preds, end_preds)
+
+        for j in xrange(start, end + 1):
+            buff.append(rev_vocab[context_data[i][j]])
         answers[uuid] = ' '.join(buff)
 
     return answers

@@ -315,7 +315,8 @@ class QASystem(object):
         #     for m in xrange(a_data.shape[0]):
         #         answers[m, a_data[m, 0] : a_data[m, 1] + 1] = 1
         #     input_feed[self.answers_placeholder] = answers
-        input_feed[self.answers_placeholder] = a_data
+        if a_data is not None:
+            input_feed[self.answers_placeholder] = a_data
 
         masks = [[True] * L + [False] * (len(c_data[0]) - L) for L in c_lens]
         input_feed[self.context_mask_placeholder] = masks
@@ -346,14 +347,11 @@ class QASystem(object):
 
         return outputs
 
-    def answer(self, session, test_x):
+    def answer(self, start_preds, end_preds):
 
-        yp, yp2 = self.decode(session, test_x)
-
-        a_s = np.argmax(yp, axis=1)
-        a_e = np.argmax(yp2, axis=1)
-
-        return (a_s, a_e)
+        start = start_preds.argmax()
+        end = start + end_preds[start:].argmax()
+        return start, end
 
     def validate(self, sess, valid_dataset):
         """
@@ -412,9 +410,7 @@ class QASystem(object):
         :return:
         """
 
-        start = start_preds.argmax()
-
-        end = start + end_preds[start:].argmax()
+        start, end = self.answer(start_preds, end_preds)
 
         f1 = 0.
 
