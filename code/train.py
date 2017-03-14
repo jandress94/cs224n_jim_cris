@@ -166,16 +166,16 @@ def initialize_model(session, model, train_dir):
     return model
 
 
-def initialize_vocab(vocab_path):
-    if tf.gfile.Exists(vocab_path):
-        rev_vocab = []
-        with tf.gfile.GFile(vocab_path, mode="rb") as f:
-            rev_vocab.extend(f.readlines())
-        rev_vocab = [line.strip('\n') for line in rev_vocab]
-        vocab = dict([(x, y) for (y, x) in enumerate(rev_vocab)])
-        return vocab, rev_vocab
-    else:
-        raise ValueError("Vocabulary file %s not found.", vocab_path)
+# def initialize_vocab(vocab_path):
+#     if tf.gfile.Exists(vocab_path):
+#         rev_vocab = []
+#         with tf.gfile.GFile(vocab_path, mode="rb") as f:
+#             rev_vocab.extend(f.readlines())
+#         rev_vocab = [line.strip('\n') for line in rev_vocab]
+#         vocab = dict([(x, y) for (y, x) in enumerate(rev_vocab)])
+#         return vocab, rev_vocab
+#     else:
+#         raise ValueError("Vocabulary file %s not found.", vocab_path)
 
 
 def get_normalized_train_dir(train_dir):
@@ -199,9 +199,9 @@ def main(_):
     # Do what you need to load datasets from FLAGS.data_dir
     #dataset = None
 
-    embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
-    vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
-    vocab, rev_vocab = initialize_vocab(vocab_path)
+    # embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
+    # vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
+    # vocab, rev_vocab = initialize_vocab(vocab_path)
 
     print("Loading training data")
     dataset_train = load_train_data(FLAGS.data_dir, isValidation = False)

@@ -262,8 +262,6 @@ class QASystem(object):
 
         U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
         self.start_preds, self.end_preds = self.decoder.decode(U)
-        self.output1 = tf.shape(self.start_preds)
-        self.output2 = self.start_preds[0, :]
 
     def setup_loss(self):
         """

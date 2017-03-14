@@ -74,6 +74,8 @@ def read_dataset(dataset, tier, vocab):
     context_data = []
     query_data = []
     question_uuid_data = []
+    orig_contexts = []
+    context_lookup = {}
 
     for articles_id in tqdm(range(len(dataset['data'])), desc="Preprocessing {}".format(tier)):
         article_paragraphs = dataset['data'][articles_id]['paragraphs']
@@ -100,8 +102,11 @@ def read_dataset(dataset, tier, vocab):
                 context_data.append(context_ids)
                 query_data.append(question_ids)
                 question_uuid_data.append(question_uuid)
+                context_lookup[question_uuid] = len(orig_contexts)
 
-    return context_data, query_data, question_uuid_data
+            orig_contexts.append(context_tokens)
+
+    return context_data, query_data, question_uuid_data, orig_contexts, context_lookup
 
 
 def prepare_dev(prefix, dev_filename, vocab):
@@ -109,9 +114,9 @@ def prepare_dev(prefix, dev_filename, vocab):
     dev_dataset = maybe_download(squad_base_url, dev_filename, prefix)
 
     dev_data = data_from_json(os.path.join(prefix, dev_filename))
-    context_data, question_data, question_uuid_data = read_dataset(dev_data, 'dev', vocab)
+    context_data, question_data, question_uuid_data, orig_contexts, context_lookup = read_dataset(dev_data, 'dev', vocab)
 
-    return context_data, question_data, question_uuid_data
+    return context_data, question_data, question_uuid_data, orig_contexts, context_lookup
 
 
 def generate_answers(sess, model, dataset, rev_vocab):
@@ -133,12 +138,15 @@ def generate_answers(sess, model, dataset, rev_vocab):
     :param rev_vocab: this is a list of vocabulary that maps index to actual words
     :return:
     """
-    context_data, question_data, question_uuid_data = dataset
+    context_data, question_data, question_uuid_data, orig_contexts, context_lookup = dataset
 
     answers = {}
     for i in xrange(len(context_data)):
         if i % 10 == 0:
             logging.info("Generating answer for example %d / %d" % (i, len(context_data)))
+
+        if i == 500:
+            break
             
         uuid = question_uuid_data[i]
         start_preds, end_preds = model.test(sess, [question_data[i]], [len(question_data[i])], [context_data[i]], [len(context_data[i])])
@@ -146,9 +154,11 @@ def generate_answers(sess, model, dataset, rev_vocab):
 
         start, end = model.answer(start_preds, end_preds)
 
-        for j in xrange(start, end + 1):
-            buff.append(rev_vocab[context_data[i][j]])
-        answers[uuid] = ' '.join(buff)
+        answers[uuid] = ' '.join(orig_contexts[context_lookup[uuid]][start : end + 1])
+
+        # for j in xrange(start, end + 1):
+        #     buff.append(rev_vocab[context_data[i][j]])
+        # answers[uuid] = ' '.join(buff)
 
     return answers
 
@@ -189,8 +199,8 @@ def main(_):
     
     dev_dirname = os.path.dirname(os.path.abspath(FLAGS.dev_path))
     dev_filename = os.path.basename(FLAGS.dev_path)
-    context_data, question_data, question_uuid_data = prepare_dev(dev_dirname, dev_filename, vocab)
-    dataset = (context_data, question_data, question_uuid_data)
+    context_data, question_data, question_uuid_data, orig_contexts, context_lookup = prepare_dev(dev_dirname, dev_filename, vocab)
+    dataset = (context_data, question_data, question_uuid_data, orig_contexts, context_lookup)
 
     # ========= Model-specific =========
     # You must change the following code to adjust to your model
