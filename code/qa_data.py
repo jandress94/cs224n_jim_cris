@@ -33,7 +33,8 @@ def setup_args():
     parser.add_argument("--source_dir", default=source_dir)
     parser.add_argument("--glove_dir", default=glove_dir)
     parser.add_argument("--vocab_dir", default=vocab_dir)
-    parser.add_argument("--glove_dim", default=50, type=int)
+    parser.add_argument("--glove_dim", default=100, type=int)
+    parser.add_argument("--random_init", default=True, type=bool)
     return parser.parse_args()
 
 
@@ -57,7 +58,7 @@ def initialize_vocabulary(vocabulary_path):
         raise ValueError("Vocabulary file %s not found.", vocabulary_path)
 
 
-def process_glove(args, vocab_list, save_path, size=4e5):
+def process_glove(args, vocab_list, save_path, size=4e5, random_init=True):
     """
     :param vocab_list: [vocab]
     :return:
@@ -66,36 +67,32 @@ def process_glove(args, vocab_list, save_path, size=4e5):
         vocab_dict = {vocab_list[i] : i for i in xrange(len(vocab_list))}
 
         glove_path = os.path.join(args.glove_dir, "glove.6B.{}d.txt".format(args.glove_dim))
-        glove = np.zeros((len(vocab_list), args.glove_dim))
-        not_found = 0
+        if random_init:
+            glove = np.random.randn(len(vocab_list), args.glove_dim)
+        else:
+            glove = np.zeros((len(vocab_list), args.glove_dim))
+        found = 0
         with open(glove_path, 'r') as fh:
             for line in tqdm(fh, total=size):
                 array = line.lstrip().rstrip().split(" ")
                 word = array[0]
                 vector = list(map(float, array[1:]))
-                # if word in vocab_list:
-                if word in vocab_dict:
-                    # idx = vocab_list.index(word)
+                if word in vocab_list:
+                    #idx = vocab_list.index(word)
                     idx = vocab_dict[word]
                     glove[idx, :] = vector
-                # elif word.capitalize() in vocab_list:
-                elif word.capitalize() in vocab_dict:
-                    # idx = vocab_list.index(word.capitalize())
+                    found += 1
+                if word.capitalize() in vocab_list:
+                    #idx = vocab_list.index(word.capitalize())
                     idx = vocab_dict[word.capitalize()]
                     glove[idx, :] = vector
-                # elif word.lower() in vocab_list:
-                elif word.lower() in vocab_dict:
-                    # idx = vocab_list.index(word.lower())
-                    idx = vocab_dict[word.lower()]
-                    glove[idx, :] = vector
-                # elif word.upper() in vocab_list:
-                elif word.upper() in vocab_dict:
-                    # idx = vocab_list.index(word.upper())
+                    found += 1
+                if word.upper() in vocab_list:
+                    #idx = vocab_list.index(word.upper())
                     idx = vocab_dict[word.upper()]
                     glove[idx, :] = vector
-                else:
-                    not_found += 1
-        found = size - not_found
+                    found += 1
+
         print("{}/{} of word vocab have corresponding vectors in {}".format(found, len(vocab_list), glove_path))
         np.savez_compressed(save_path, glove=glove)
         print("saved trimmed glove matrix at: {}".format(save_path))
@@ -114,10 +111,10 @@ def create_vocabulary(vocabulary_path, data_paths, tokenizer=None):
                         print("processing line %d" % counter)
                     tokens = tokenizer(line) if tokenizer else basic_tokenizer(line)
                     for w in tokens:
-                        if w.lower() in vocab:
-                            vocab[w.lower()] += 1
+                        if w in vocab:
+                            vocab[w] += 1
                         else:
-                            vocab[w.lower()] = 1
+                            vocab[w] = 1
         vocab_list = _START_VOCAB + sorted(vocab, key=vocab.get, reverse=True)
         print("Vocabulary size: %d" % len(vocab_list))
         with gfile.GFile(vocabulary_path, mode="wb") as vocab_file:
@@ -155,6 +152,7 @@ if __name__ == '__main__':
 
     train_path = pjoin(args.source_dir, "train")
     valid_path = pjoin(args.source_dir, "val")
+    dev_path = pjoin(args.source_dir, "dev")
 
     create_vocabulary(vocab_path,
                       [pjoin(args.source_dir, "train.context"),
@@ -166,7 +164,8 @@ if __name__ == '__main__':
     # ======== Trim Distributed Word Representation =======
     # If you use other word representations, you should change the code below
 
-    process_glove(args, rev_vocab, args.source_dir + "/glove.trimmed.{}".format(args.glove_dim))
+    process_glove(args, rev_vocab, args.source_dir + "/glove.trimmed.{}".format(args.glove_dim),
+                  random_init=args.random_init)
 
     # ======== Creating Dataset =========
     # We created our data files seperately
