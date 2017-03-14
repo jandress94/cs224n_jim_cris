@@ -144,9 +144,6 @@ def generate_answers(sess, model, dataset, rev_vocab):
     for i in xrange(len(context_data)):
         if i % 10 == 0:
             logging.info("Generating answer for example %d / %d" % (i, len(context_data)))
-
-        if i == 500:
-            break
             
         uuid = question_uuid_data[i]
         start_preds, end_preds = model.test(sess, [question_data[i]], [len(question_data[i])], [context_data[i]], [len(context_data[i])])
