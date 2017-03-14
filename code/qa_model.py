@@ -119,6 +119,8 @@ class Encoder(object):
             # = R(m, w_c, 4h)
             U = concat_fw_bw(U)[:, :-1, :]
 
+            # U = tf.Print(U, [tf.shape(U)], "Shape of U: ")
+
         return U
 
 class Decoder(object):
@@ -133,20 +135,27 @@ class Decoder(object):
         Output has dimensions (m, w_c)
         """
         # = R(4h, h)
-        w_1 = tf.get_variable("w_1", [4*FLAGS.state_size, FLAGS.state_size], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+        # w_1 = tf.get_variable("w_1", [4*FLAGS.state_size, FLAGS.state_size], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
         # = R(h)
-        b_1 = tf.get_variable("b_1", [FLAGS.state_size], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+        # b_1 = tf.get_variable("b_1", [FLAGS.state_size], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
 
         # = R(m, w_c, h)
-        h = tf.sigmoid(tf.tensordot(U, w_1, [[2], [0]]) + b_1)
+        # h = tf.nn.relu(tf.tensordot(U, w_1, [[2], [0]]) + b_1)
 
         # = R(h)
-        w_2 = tf.get_variable("w_2", [FLAGS.state_size, 1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+        # w_2 = tf.get_variable("w_2", [FLAGS.state_size, 1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
         # = R
-        b_2 = tf.get_variable("b_2", [1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+        # b_2 = tf.get_variable("b_2", [1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
 
         # = R(m, w_c, 1)
-        scores = tf.sigmoid(tf.tensordot(h, w_2, [[2], [0]]) + b_2)
+        # scores = tf.nn.relu(tf.tensordot(h, w_2, [[2], [0]]) + b_2)
+
+        # = R(4h, 1)
+        w = tf.get_variable("w", [4 * FLAGS.state_size, 1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+        # = R
+        b = tf.get_variable("b", [1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+
+        scores = tf.tensordot(U, w, [[2], [0]]) + b
 
         # = R(m, w_c)
         return tf.squeeze(scores)
@@ -166,10 +175,10 @@ class Decoder(object):
         # = R(m, w_c, 4h)
         U = knowledge_rep
 
-        with vs.variable_scope("start_pred_netword"):
+        with vs.variable_scope("start_pred_network"):
             start_preds = self.build_ff_nn(U)
 
-        with vs.variable_scope("end_pred_netword"):
+        with vs.variable_scope("end_pred_network"):
             end_preds = self.build_ff_nn(U)
 
         return start_preds, end_preds
@@ -183,6 +192,10 @@ class QASystem(object):
         :param decoder: a decoder that you constructed in train.py
         :param args: pass in more arguments as needed
         """
+        self.outputs = []
+        self.grad_names = []
+        self.grad_dict = {}
+
         self.encoder = encoder
         self.decoder = decoder
 
@@ -212,8 +225,30 @@ class QASystem(object):
     def add_training_op(self):
         # do gradient clipping (optional)
         # call optimizer.minimize_loss() or apply_gradients if we chose to do clipping
+
         optimizer = tf.train.AdamOptimizer(FLAGS.learning_rate) if FLAGS.optimizer == 'adam' else tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
-        return optimizer.minimize(self.loss)
+
+        grads = optimizer.compute_gradients(self.loss)
+
+        # grads = tf.Print(grads, [len(grads)])
+
+        grads_list = []
+        # trainables = []
+        for grad in grads:
+            grads_list.append(grad[0])
+            
+            self.grad_dict[grad[1].name] = []
+            self.grad_names.append(grad[1].name)
+            self.outputs.append(tf.norm(grad[0]))
+
+        # if self.config.clip_gradients:
+        #     grads_list, _ = tf.clip_by_global_norm(grads_list, clip_norm=self.config.max_grad_norm)
+        #     grads = zip(grads_list, trainables)
+        self.grad_norm = tf.global_norm(grads_list)
+        train_op = optimizer.apply_gradients(grads)
+        return train_op
+
+        # return optimizer.minimize(self.loss)
 
     def setup_system(self):
         """
@@ -289,13 +324,18 @@ class QASystem(object):
 
         # self.train_op, self.loss, self.grad_norm
         # output_feed = [self.output1, self.output2]
-        output_feed = [self.train_op, self.loss]
+        output_feed = [self.train_op, self.loss] + self.outputs
 
         outputs = session.run(output_feed, input_feed)
 
+        # print(self.grad_names)
         # print(outputs)
 
-        return outputs
+        for i in xrange(len(self.grad_names)):
+            var_name = self.grad_names[i]
+            self.grad_dict[var_name].append(outputs[i + 2])
+
+        return outputs[:2]
 
     def test(self, session, q_data, q_lens, c_data, c_lens, a_data = None):
         """
@@ -468,11 +508,11 @@ class QASystem(object):
 
         question_data, context_data, answer_data = dataset_train
 
-        scores = self.validate(session, dataset_val)
-        logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
-        if scores[0] < lowest_cost:
-            lowest_cost = scores[0]
-            self.saver.save(session, FLAGS.train_dir + "/model.weights") 
+        # scores = self.validate(session, dataset_val)
+        # logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
+        # if scores[0] < lowest_cost:
+        #     lowest_cost = scores[0]
+        #     self.saver.save(session, FLAGS.train_dir + "/model.weights") 
 
         num_minibatches = int(np.ceil(len(question_data) / FLAGS.batch_size))
 
@@ -499,6 +539,20 @@ class QASystem(object):
                 toc = time.time()
                 if minibatchIdx == 0:
                     logging.info("Minibatch took %f secs" % (toc - tic))
+
+
+
+                
+                f = open("grads.csv", 'w')
+                for var_name in self.grad_dict:
+                    f.write(var_name)
+                    for grad in self.grad_dict[var_name]:
+                        f.write(',' + str(grad))
+                    f.write("\n")
+                f.close()
+
+
+
 
             if epoch % FLAGS.print_every_num_epochs == 0:
                 scores = self.validate(session, dataset_val)
