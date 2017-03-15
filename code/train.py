@@ -248,14 +248,22 @@ def main(_):
     with open(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
         json.dump(FLAGS.__flags, fout)
 
-    with tf.Session() as sess:
+    cris_flag = os.environ.get('CS224N_CRIS')
+
+    if cris_flag is not None:
+        print('hi cris')
+        sess = tf.Session(config = tf.ConfigProto(intra_op_parallelism_threads = 1))
+    else:
+        sess = tf.Session()
+
+    with sess.as_default():
         load_train_dir = get_normalized_train_dir(FLAGS.load_train_dir or FLAGS.train_dir)
         initialize_model(sess, qa, load_train_dir)
 
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
         qa.train(sess, dataset_train, dataset_val, save_train_dir)
 
-        # qa.evaluate_answer(sess, dataset_val, vocab, FLAGS.evaluate, log=True)
+    sess.close()
 
 if __name__ == "__main__":
     tf.app.run()
