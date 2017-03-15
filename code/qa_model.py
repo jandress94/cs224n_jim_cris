@@ -570,11 +570,11 @@ class QASystem(object):
 
         question_data, context_data, answer_data = dataset_train
 
-        # scores = self.validate(session, dataset_val)
-        # logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
-        # if scores[0] < lowest_cost:
-        #     lowest_cost = scores[0]
-        #     self.saver.save(session, FLAGS.train_dir + "/model.weights") 
+        scores = self.validate(session, dataset_val)
+        logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
+        if scores[0] < lowest_cost:
+            lowest_cost = scores[0]
+            self.saver.save(session, FLAGS.train_dir + "/model.weights") 
 
         num_minibatches = int(np.ceil(len(question_data) / FLAGS.batch_size))
 

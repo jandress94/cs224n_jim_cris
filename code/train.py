@@ -203,13 +203,13 @@ def main(_):
     # vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     # vocab, rev_vocab = initialize_vocab(vocab_path)
 
-    print("Loading training data")
+    logging.info("Loading training data")
     dataset_train = load_train_data(FLAGS.data_dir, isValidation = False)
-    print("Loading validation data")
+    logging.info("Loading validation data")
     dataset_val = load_train_data(FLAGS.data_dir, isValidation = True)
-    # print(question_data[0])
-    # print(context_data[0])
-    # print(answer_data[0])
+    # logging.info(question_data[0])
+    # logging.info(context_data[0])
+    # logging.info(answer_data[0])
 
 
     # dev_dirname = os.path.dirname(os.path.abspath(FLAGS.data_dir))
@@ -232,7 +232,7 @@ def main(_):
     #plt.savefig('answer_data_mean.png')
 
 
-    print("Building Model Graph")
+    logging.info("Building Model Graph")
     tf.set_random_seed(42)
     np.random.seed(43)
 
@@ -246,14 +246,14 @@ def main(_):
     file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
     logging.getLogger().addHandler(file_handler)
 
-    print(vars(FLAGS))
+    logging.info(vars(FLAGS))
     with open(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
         json.dump(FLAGS.__flags, fout)
 
     cris_flag = os.environ.get('CS224N_CRIS')
 
     if cris_flag is not None:
-        print('hi cris')
+        logging.info('hi cris')
         sess = tf.Session(config = tf.ConfigProto(intra_op_parallelism_threads = 1))
     else:
         sess = tf.Session()
