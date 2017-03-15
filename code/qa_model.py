@@ -107,12 +107,13 @@ class Encoder(object):
             L = tf.where(condition, infs, L)  # component is taken from infs if condition is true, else it's taken from L         
 
             # TODO: THINK ABOUT WHETHER THESE ARE RIGHT, I AM HONESTLY 50/50 ABOUT IT.  THE DIM SHOULD BE 1 OR 2 FOR BOTH
+            softmax_dim = 2
             # = R(m, w_q + 1, w_c + 1)
-            A_Q = tf.nn.softmax(tf.transpose(L, perm = [0, 2, 1]))
+            A_Q = tf.nn.softmax(tf.transpose(L, perm = [0, 2, 1]), dim = softmax_dim)
             A_Q = tf.where(tf.is_nan(A_Q), tf.zeros_like(A_Q), A_Q) # convert NaNs to zeros
 
             # = R(m, w_c + 1, w_q + 1)
-            A_D = tf.nn.softmax(L)
+            A_D = tf.nn.softmax(L, dim = softmax_dim)
             A_D = tf.where(tf.is_nan(A_D), tf.zeros_like(A_D), A_D) # convert NaNs to zeros
 
             # Remove nans from Q and D
