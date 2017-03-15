@@ -233,7 +233,9 @@ def main(_):
 
 
     print("Building Model Graph")
-
+    tf.set_random_seed(42)
+    np.random.seed(43)
+    
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     decoder = Decoder(output_size=FLAGS.output_size)
 

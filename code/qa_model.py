@@ -41,7 +41,7 @@ class Encoder(object):
         self.size = size
         self.vocab_dim = vocab_dim
 
-    def encode(self, q_data, q_lens, c_data, c_lens):
+    def encode(self, q_data, q_lens, q_mask, c_data, c_lens, c_mask):
         """
         In a generalized encode function, you pass in your inputs,
         masks, and an initial
@@ -77,6 +77,7 @@ class Encoder(object):
 
             # = R(m, w_q, 2h)
             Q_prime = concat_fw_bw(outputs_q)
+
             # = R(m, w_c, 2h)
             D = concat_fw_bw(outputs_c)
 
@@ -86,21 +87,37 @@ class Encoder(object):
 
             # = R(m, w_q + 1, 2h)
             Q_prime = tf.concat([Q_prime, q_sent_tile], axis = 1)
+            
             # = R(m, w_c + 1, 2h)
             D = tf.concat([D, d_sent_tile], axis = 1)
+            #c_mask = tf.tile(tf.expand_dims(c_mask, -1), [1, 1, 2*FLAGS.state_size])
+            #D += c_mask
 
             # = R(m, w_q + 1, 2h)
             Q = tf.tanh(tf.tensordot(Q_prime, W_Q, [[2], [0]]) + b_Q)
+            q_mask = tf.tile(tf.expand_dims(q_mask, -1), [1, 1, 2*FLAGS.state_size])
+            Q = q_mask * Q 
 
         with vs.variable_scope("coattention_encoder"):
             # = R(m, w_c + 1, w_q + 1)
-            L = tf.matmul(D, tf.transpose(Q, perm = [0, 2, 1]))        
+            L = tf.matmul(D, tf.transpose(Q, perm = [0, 2, 1]))
+            # Convert 0 to -inf for softmax
+            infs = tf.fill(tf.shape(L), np.float64(-np.inf))
+            condition = tf.equal(L, 0)
+            L = tf.where(condition, infs, L)  # component is taken from infs if condition is true, else it's taken from L         
 
             # TODO: THINK ABOUT WHETHER THESE ARE RIGHT, I AM HONESTLY 50/50 ABOUT IT.  THE DIM SHOULD BE 1 OR 2 FOR BOTH
             # = R(m, w_q + 1, w_c + 1)
             A_Q = tf.nn.softmax(tf.transpose(L, perm = [0, 2, 1]))
+            A_Q = tf.where(tf.is_nan(A_Q), tf.zeros_like(A_Q), A_Q) # convert NaNs to zeros
+
             # = R(m, w_c + 1, w_q + 1)
             A_D = tf.nn.softmax(L)
+            A_D = tf.where(tf.is_nan(A_D), tf.zeros_like(A_D), A_D) # convert NaNs to zeros
+
+            # Remove nans from Q and D
+            #Q = tf.where(tf.is_nan(Q), tf.zeros_like(Q), Q)
+            #D = tf.where(tf.is_nan(D), tf.zeros_like(D), D)
 
             # = R(m, w_q + 1, 2h)
             C_Q = tf.matmul(A_Q, D)
@@ -114,6 +131,7 @@ class Encoder(object):
             D_CD.set_shape([None, None, 6*FLAGS.state_size])
 
             lstm_cell = tf.contrib.rnn.BasicLSTMCell(2 * FLAGS.state_size)
+
             # = R(2, m, w_c + 1, 2h)
             U = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, D_CD, c_lens, dtype = tf.float64)[0]
             # = R(m, w_c, 4h)
@@ -153,9 +171,9 @@ class Decoder(object):
         # = R(4h, 1)
         w = tf.get_variable("w", [4 * FLAGS.state_size, 1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
         # = R
-        b = tf.get_variable("b", [1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+        #b = tf.get_variable("b", [1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
 
-        scores = tf.tensordot(U, w, [[2], [0]]) + b
+        scores = tf.tensordot(U, w, [[2], [0]]) #+ b
 
         # = R(m, w_c)
         return tf.squeeze(scores)
@@ -208,8 +226,10 @@ class QASystem(object):
         self.context_placeholder = tf.placeholder(tf.int32)
         # = R(m)
         self.context_len_placeholder = tf.placeholder(tf.int32, shape = (None, ))
-        # = R(m, w_c)
-        self.context_mask_placeholder = tf.placeholder(tf.bool, shape = (None, None))
+        # = R(m, w_c + 1)
+        self.context_mask_placeholder = tf.placeholder(tf.float64, shape = (None, None))
+        # = R(m, w_q + 1)
+        self.question_mask_placeholder = tf.placeholder(tf.float64, shape = (None, None))
         # = R(m, 2)
         self.answers_placeholder = tf.placeholder(tf.int32, shape = (None, 2))
 
@@ -260,7 +280,7 @@ class QASystem(object):
         # encoded_q_states, encoded_c, self.output1, self.output2 = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
         # self.preds = self.decoder.decode((encoded_q_states, encoded_c, self.context_len_placeholder))
 
-        U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
+        U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.question_mask_placeholder, self.embeddings_c, self.context_len_placeholder, self.context_mask_placeholder)
         self.start_preds, self.end_preds = self.decoder.decode(U)
 
     def setup_loss(self):
@@ -317,8 +337,10 @@ class QASystem(object):
         # input_feed[self.answers_placeholder] = answers
         input_feed[self.answers_placeholder] = a_data
 
-        masks = [[True] * L + [False] * (len(c_data[0]) - L) for L in c_lens]
-        input_feed[self.context_mask_placeholder] = masks
+        c_masks = [[0] * L + [np.nan] * (len(c_data[0]) - L) + [0] for L in c_lens]
+        input_feed[self.context_mask_placeholder] = c_masks
+        q_masks = [[1] * L + [0] * (len(q_data[0]) - L) + [1] for L in q_lens]
+        input_feed[self.question_mask_placeholder] = q_masks
 
         # self.train_op, self.loss, self.grad_norm
         # output_feed = [self.output1, self.output2]
@@ -356,8 +378,10 @@ class QASystem(object):
         if a_data is not None:
             input_feed[self.answers_placeholder] = a_data
 
-        masks = [[True] * L + [False] * (len(c_data[0]) - L) for L in c_lens]
-        input_feed[self.context_mask_placeholder] = masks
+        c_masks = [[0] * L + [np.nan] * (len(c_data[0]) - L) + [0] for L in c_lens]
+        input_feed[self.context_mask_placeholder] = c_masks
+        q_masks = [[1] * L + [0] * (len(q_data[0]) - L) + [1] for L in q_lens]
+        input_feed[self.question_mask_placeholder] = q_masks
 
         output_feed = [self.start_preds, self.end_preds] 
 
