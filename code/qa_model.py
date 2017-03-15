@@ -97,10 +97,11 @@ class Encoder(object):
             L = tf.matmul(D, tf.transpose(Q, perm = [0, 2, 1]))        
 
             # TODO: THINK ABOUT WHETHER THESE ARE RIGHT, I AM HONESTLY 50/50 ABOUT IT.  THE DIM SHOULD BE 1 OR 2 FOR BOTH
+            softmax_dim = -2
             # = R(m, w_q + 1, w_c + 1)
-            A_Q = tf.nn.softmax(tf.transpose(L, perm = [0, 2, 1]))
+            A_Q = tf.nn.softmax(tf.transpose(L, perm = [0, 2, 1]), dim = softmax_dim)
             # = R(m, w_c + 1, w_q + 1)
-            A_D = tf.nn.softmax(L)
+            A_D = tf.nn.softmax(L, dim = softmax_dim)
 
             # = R(m, w_q + 1, 2h)
             C_Q = tf.matmul(A_Q, D)
