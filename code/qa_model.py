@@ -41,7 +41,7 @@ class Encoder(object):
         self.size = size
         self.vocab_dim = vocab_dim
 
-    def encode(self, q_data, q_lens, q_mask, c_data, c_lens, c_mask):
+    def encode(self, q_data, q_lens, q_mask, c_data, c_lens, c_mask, dropout):
         """
         In a generalized encode function, you pass in your inputs,
         masks, and an initial
@@ -59,27 +59,33 @@ class Encoder(object):
 
         with vs.variable_scope("quest_cont_encoder") as scope:
             # = R(1, 1, 2h)
-            q_sent = tf.get_variable("q_sentinel", [1, 1, 2*FLAGS.state_size], tf.float64, tf.random_normal_initializer())
-            d_sent = tf.get_variable("d_sentinel", [1, 1, 2*FLAGS.state_size], tf.float64, tf.random_normal_initializer())
+            q_sent = tf.get_variable("q_sentinel", [1, 1, 2*FLAGS.state_size], tf.float32, tf.random_normal_initializer())
+            d_sent = tf.get_variable("d_sentinel", [1, 1, 2*FLAGS.state_size], tf.float32, tf.random_normal_initializer())
 
              # = R(2h 2h)
-            W_Q = tf.get_variable("W_Q", [2*FLAGS.state_size, 2*FLAGS.state_size], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+            W_Q = tf.get_variable("W_Q", [2*FLAGS.state_size, 2*FLAGS.state_size], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
             # = R(2h)
-            b_Q = tf.get_variable("b_Q", [2*FLAGS.state_size], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+            b_Q = tf.get_variable("b_Q", [2*FLAGS.state_size], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
 
-            lstm_cell = tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
+            lstm_cell = tf.contrib.rnn.LSTMBlockCell(FLAGS.state_size, forget_bias = 0) #tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
+
+            # apply dropout
+            q_data = tf.nn.dropout(q_data, keep_prob = 1 - dropout)
+            c_data = tf.nn.dropout(c_data, keep_prob = 1 - dropout)
 
             # = R(2, m, w_q, h)
-            outputs_q, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, q_data, q_lens, dtype = tf.float64)
+            outputs_q, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, q_data, q_lens, dtype = tf.float32)
             scope.reuse_variables()
             # = R(2, m, w_c, h)
-            outputs_c, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, c_data, c_lens, dtype = tf.float64)
+            outputs_c, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, c_data, c_lens, dtype = tf.float32)
 
             # = R(m, w_q, 2h)
             Q_prime = concat_fw_bw(outputs_q)
+            Q_prime = tf.nn.dropout(Q_prime, keep_prob = 1 - dropout)
 
             # = R(m, w_c, 2h)
             D = concat_fw_bw(outputs_c)
+            D = tf.nn.dropout(D, keep_prob = 1 - dropout)
 
             # = R(m, 1, 2h)
             q_sent_tile = tf.tile(q_sent, [tf.shape(Q_prime)[0], 1, 1])
@@ -102,18 +108,17 @@ class Encoder(object):
             # = R(m, w_c + 1, w_q + 1)
             L = tf.matmul(D, tf.transpose(Q, perm = [0, 2, 1]))
             # Convert 0 to -inf for softmax
-            infs = tf.fill(tf.shape(L), np.float64(-np.inf))
+            infs = tf.fill(tf.shape(L), -np.inf)
             condition = tf.equal(L, 0)
             L = tf.where(condition, infs, L)  # component is taken from infs if condition is true, else it's taken from L         
 
             # TODO: THINK ABOUT WHETHER THESE ARE RIGHT, I AM HONESTLY 50/50 ABOUT IT.  THE DIM SHOULD BE 1 OR 2 FOR BOTH
-            softmax_dim = 2
             # = R(m, w_q + 1, w_c + 1)
-            A_Q = tf.nn.softmax(tf.transpose(L, perm = [0, 2, 1]), dim = softmax_dim)
+            A_Q = tf.nn.softmax(tf.transpose(L, perm = [0, 2, 1]))
             A_Q = tf.where(tf.is_nan(A_Q), tf.zeros_like(A_Q), A_Q) # convert NaNs to zeros
 
             # = R(m, w_c + 1, w_q + 1)
-            A_D = tf.nn.softmax(L, dim = softmax_dim)
+            A_D = tf.nn.softmax(L)
             A_D = tf.where(tf.is_nan(A_D), tf.zeros_like(A_D), A_D) # convert NaNs to zeros
 
             # Remove nans from Q and D
@@ -131,12 +136,14 @@ class Encoder(object):
             D_CD = tf.concat([D, C_D], axis = 2)
             D_CD.set_shape([None, None, 6*FLAGS.state_size])
 
-            lstm_cell = tf.contrib.rnn.BasicLSTMCell(2 * FLAGS.state_size)
+            lstm_cell = tf.contrib.rnn.LSTMBlockCell(2 * FLAGS.state_size, forget_bias = 0) # tf.contrib.rnn.BasicLSTMCell(2 * FLAGS.state_size)
 
             # = R(2, m, w_c + 1, 2h)
-            U = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, D_CD, c_lens, dtype = tf.float64)[0]
+            U = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, D_CD, c_lens, dtype = tf.float32)[0]
             # = R(m, w_c, 4h)
             U = concat_fw_bw(U)[:, :-1, :]
+
+            U = tf.nn.dropout(U, keep_prob = 1 - dropout)
 
             # U = tf.Print(U, [tf.shape(U)], "Shape of U: ")
 
@@ -170,14 +177,21 @@ class Decoder(object):
         # scores = tf.nn.relu(tf.tensordot(h, w_2, [[2], [0]]) + b_2)
 
         # = R(4h, 1)
-        w = tf.get_variable("w", [4 * FLAGS.state_size, 1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
+        w = tf.get_variable("w", [4 * FLAGS.state_size, 1], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
         # = R
         #b = tf.get_variable("b", [1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
 
         scores = tf.tensordot(U, w, [[2], [0]]) #+ b
 
         # = R(m, w_c)
-        return tf.squeeze(scores)
+        scores = tf.squeeze(scores)
+
+        # map all zeros to -inf
+        infs = tf.fill(tf.shape(scores), -np.inf)
+        condition = tf.equal(scores, 0)
+        scores = tf.where(condition, infs, scores)
+
+        return scores
 
     def decode(self, knowledge_rep):
         """
@@ -228,11 +242,13 @@ class QASystem(object):
         # = R(m)
         self.context_len_placeholder = tf.placeholder(tf.int32, shape = (None, ))
         # = R(m, w_c + 1)
-        self.context_mask_placeholder = tf.placeholder(tf.float64, shape = (None, None))
+        self.context_mask_placeholder = tf.placeholder(tf.float32, shape = (None, None))
         # = R(m, w_q + 1)
-        self.question_mask_placeholder = tf.placeholder(tf.float64, shape = (None, None))
+        self.question_mask_placeholder = tf.placeholder(tf.float32, shape = (None, None))
         # = R(m, 2)
         self.answers_placeholder = tf.placeholder(tf.int32, shape = (None, 2))
+        # = R
+        self.dropout_placeholder = tf.placeholder(tf.float32, shape = ())
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
@@ -281,7 +297,7 @@ class QASystem(object):
         # encoded_q_states, encoded_c, self.output1, self.output2 = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.embeddings_c, self.context_len_placeholder)
         # self.preds = self.decoder.decode((encoded_q_states, encoded_c, self.context_len_placeholder))
 
-        U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.question_mask_placeholder, self.embeddings_c, self.context_len_placeholder, self.context_mask_placeholder)
+        U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.question_mask_placeholder, self.embeddings_c, self.context_len_placeholder, self.context_mask_placeholder, self.dropout_placeholder)
         self.start_preds, self.end_preds = self.decoder.decode(U)
 
     def setup_loss(self):
@@ -317,7 +333,7 @@ class QASystem(object):
             embeddings_c = tf.nn.embedding_lookup(embedding_matrix, self.context_placeholder)
             embeddings_c = tf.reshape(embeddings_c, (-1, tf.shape(self.context_placeholder)[1], FLAGS.embedding_size))
             
-        return embeddings_q, embeddings_c
+        return tf.to_float(embeddings_q), tf.to_float(embeddings_c)
 
     def optimize(self, session, q_data, q_lens, c_data, c_lens, a_data):
         """
@@ -330,6 +346,7 @@ class QASystem(object):
         input_feed[self.question_len_placeholder] = q_lens
         input_feed[self.context_placeholder] = c_data
         input_feed[self.context_len_placeholder] = c_lens
+        input_feed[self.dropout_placeholder] = FLAGS.dropout
 
         # answers = np.zeros((len(c_data), len(c_data[0])))
         # a_data = np.array(a_data)
@@ -369,6 +386,7 @@ class QASystem(object):
         input_feed[self.question_len_placeholder] = q_lens
         input_feed[self.context_placeholder] = c_data
         input_feed[self.context_len_placeholder] = c_lens
+        input_feed[self.dropout_placeholder] = 0
 
         # if a_data is not None:
         #     answers = np.zeros((len(c_data), len(c_data[0])))
@@ -412,8 +430,29 @@ class QASystem(object):
 
     def answer(self, start_preds, end_preds):
 
-        start = start_preds.argmax()
-        end = start + end_preds[start:].argmax()
+        def softmax(x):
+            max_elem = np.max(x)
+            exp_x = np.exp(x - max_elem)
+            x = exp_x / np.sum(exp_x)
+            return x
+
+        start_preds = softmax(start_preds)
+        end_preds = softmax(end_preds)
+
+        L = len(start_preds)
+        max_prod = -1
+        start = 0
+        end = 0
+        for i in xrange(L):
+            for j in range(i, L):
+                prod = start_preds[i] * end_preds[j]
+                if prod > max_prod:
+                    max_prod = prod
+                    start = i 
+                    end = j 
+
+        #start = start_preds.argmax()
+        #end = start + end_preds[start:].argmax()
         return start, end
 
     def validate(self, sess, valid_dataset):
