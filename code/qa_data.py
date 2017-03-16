@@ -33,7 +33,7 @@ def setup_args():
     parser.add_argument("--source_dir", default=source_dir)
     parser.add_argument("--glove_dir", default=glove_dir)
     parser.add_argument("--vocab_dir", default=vocab_dir)
-    parser.add_argument("--glove_dim", default=100, type=int)
+    parser.add_argument("--glove_dim", default=300, type=int)
     parser.add_argument("--random_init", default=True, type=bool)
     return parser.parse_args()
 
@@ -58,7 +58,7 @@ def initialize_vocabulary(vocabulary_path):
         raise ValueError("Vocabulary file %s not found.", vocabulary_path)
 
 
-def process_glove(args, vocab_list, save_path, size=4e5, random_init=True):
+def process_glove(args, vocab_list, save_path, size=2.2e6, random_init=True):
     """
     :param vocab_list: [vocab]
     :return:
@@ -66,30 +66,36 @@ def process_glove(args, vocab_list, save_path, size=4e5, random_init=True):
     if not gfile.Exists(save_path + ".npz"):
         vocab_dict = {vocab_list[i] : i for i in xrange(len(vocab_list))}
 
-        glove_path = os.path.join(args.glove_dir, "glove.6B.{}d.txt".format(args.glove_dim))
+        glove_path = os.path.join(args.glove_dir, "glove.840B.{}d.txt".format(args.glove_dim))
+        print(glove_path)
         if random_init:
             glove = np.random.randn(len(vocab_list), args.glove_dim)
         else:
             glove = np.zeros((len(vocab_list), args.glove_dim))
         found = 0
+        glove_set = set()
         with open(glove_path, 'r') as fh:
             for line in tqdm(fh, total=size):
                 array = line.lstrip().rstrip().split(" ")
                 word = array[0]
                 vector = list(map(float, array[1:]))
-                if word in vocab_list:
+                if word in vocab_dict:
                     #idx = vocab_list.index(word)
                     idx = vocab_dict[word]
                     glove[idx, :] = vector
-                    found += 1
-                if word.capitalize() in vocab_list:
+                    if word not in glove_set:
+                        found += 1
+                    glove_set.add(word)
+                cap = word.capitalize()
+                if cap in vocab_dict and cap not in glove_set:
                     #idx = vocab_list.index(word.capitalize())
-                    idx = vocab_dict[word.capitalize()]
+                    idx = vocab_dict[cap]
                     glove[idx, :] = vector
                     found += 1
-                if word.upper() in vocab_list:
+                cap = word.upper()
+                if cap in vocab_dict and cap not in glove_set:
                     #idx = vocab_list.index(word.upper())
-                    idx = vocab_dict[word.upper()]
+                    idx = vocab_dict[cap]
                     glove[idx, :] = vector
                     found += 1
 
