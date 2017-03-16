@@ -8,6 +8,7 @@ import json
 import sys
 import random
 from os.path import join as pjoin
+from datetime import datetime
 
 from tqdm import tqdm
 import numpy as np
@@ -21,6 +22,7 @@ import qa_data
 
 import logging
 from flags import *
+from preprocessing.squad_preprocess import padClip
 
 logging.basicConfig(level=logging.INFO)
 
@@ -140,22 +142,25 @@ def generate_answers(sess, model, dataset, rev_vocab):
     """
     context_data, question_data, question_uuid_data, orig_contexts, context_lookup = dataset
 
+    num_minibatches = int(np.ceil(len(question_data) / FLAGS.batch_size))
+
     answers = {}
-    for i in xrange(len(context_data)):
-        if i % 10 == 0:
-            logging.info("Generating answer for example %d / %d" % (i, len(context_data)))
-            
-        uuid = question_uuid_data[i]
-        start_preds, end_preds = model.test(sess, [question_data[i]], [len(question_data[i])], [context_data[i]], [len(context_data[i])])
-        buff = []
+    counter = 0
 
-        start, end = model.answer(start_preds, end_preds)
+    for minibatchIdx in xrange(num_minibatches):
+        if minibatchIdx % max(int(num_minibatches / FLAGS.print_times_per_validate), 1) == 0:
+            logging.info("Completed minibatch %d / %d at time %s" % (minibatchIdx, num_minibatches, str(datetime.now())))
 
-        answers[uuid] = ' '.join(orig_contexts[context_lookup[uuid]][start : end + 1])
+        mini_question_data, question_lengths = padClip(question_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], np.inf)
+        mini_context_data, context_lengths = padClip(context_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], np.inf)
+        
+        start_preds, end_preds = model.test(sess, mini_question_data, question_lengths, mini_context_data, context_lengths)
 
-        # for j in xrange(start, end + 1):
-        #     buff.append(rev_vocab[context_data[i][j]])
-        # answers[uuid] = ' '.join(buff)
+        for i in xrange(len(mini_question_data)):
+            start, end = model.answer(start_preds[i, 0:context_lengths[i]], end_preds[i, 0:context_lengths[i]])
+            uuid = question_uuid_data[counter]
+            answers[uuid] = ' '.join(orig_contexts[context_lookup[uuid]][start : end + 1])
+            counter += 1
 
     return answers
 
