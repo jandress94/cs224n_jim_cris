@@ -70,14 +70,18 @@ class Encoder(object):
             lstm_cell = tf.contrib.rnn.LSTMBlockCell(FLAGS.state_size, forget_bias = 0) #tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
 
             # apply dropout
-            q_data = tf.nn.dropout(q_data, keep_prob = 1 - dropout)
-            c_data = tf.nn.dropout(c_data, keep_prob = 1 - dropout)
+            if FLAGS.use_drop_on_wv:
+                q_data = tf.nn.dropout(q_data, keep_prob = 1 - dropout)
+                c_data = tf.nn.dropout(c_data, keep_prob = 1 - dropout)
 
             # = R(2, m, w_q, h)
-            outputs_q, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, q_data, q_lens, dtype = tf.float32)
+            outputs_q, output_states_q = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, q_data, q_lens, dtype = tf.float32)
             scope.reuse_variables()
             # = R(2, m, w_c, h)
-            outputs_c, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, c_data, c_lens, dtype = tf.float32)
+            if FLAGS.init_c_with_q:
+                outputs_c, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, c_data, c_lens, output_states_q[0], output_states_q[1])
+            else:
+                outputs_c, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, c_data, c_lens, dtype = tf.float32)
 
             # = R(m, w_q, 2h)
             Q_prime = concat_fw_bw(outputs_q)
@@ -101,6 +105,7 @@ class Encoder(object):
 
             # = R(m, w_q + 1, 2h)
             Q = tf.tanh(tf.tensordot(Q_prime, W_Q, [[2], [0]]) + b_Q)
+
             q_mask = tf.tile(tf.expand_dims(q_mask, -1), [1, 1, 2*FLAGS.state_size])
             Q = q_mask * Q 
 
@@ -259,6 +264,10 @@ class QASystem(object):
         # ==== set up training/updating procedure ====
         self.train_op = self.add_training_op()
 
+    def reset(self):
+        for name in self.grad_names:
+            self.grad_dict[name] = []
+
     def add_training_op(self):
         # do gradient clipping (optional)
         # call optimizer.minimize_loss() or apply_gradients if we chose to do clipping
@@ -267,21 +276,20 @@ class QASystem(object):
 
         grads = optimizer.compute_gradients(self.loss)
 
-        # grads = tf.Print(grads, [len(grads)])
-
         grads_list = []
-        # trainables = []
+        trainables = []
         for grad in grads:
             grads_list.append(grad[0])
-            
+            trainables.append(grad[1])
+
+        grads_list, _ = tf.clip_by_global_norm(grads_list, clip_norm=FLAGS.max_gradient_norm)
+        grads = zip(grads_list, trainables)
+
+        for grad in grads:
             self.grad_dict[grad[1].name] = []
             self.grad_names.append(grad[1].name)
             self.outputs.append(tf.norm(grad[0]))
 
-        # if self.config.clip_gradients:
-        #     grads_list, _ = tf.clip_by_global_norm(grads_list, clip_norm=self.config.max_grad_norm)
-        #     grads = zip(grads_list, trainables)
-        self.grad_norm = tf.global_norm(grads_list)
         train_op = optimizer.apply_gradients(grads)
         return train_op
 
@@ -587,7 +595,7 @@ class QASystem(object):
 
             for minibatchIdx in xrange(num_minibatches):
                 if minibatchIdx % max(int(num_minibatches / FLAGS.print_times_per_epoch), 1) == 0:
-                    logging.info("Completed minibatch %d / %d at time %s, Loss was %f" % (minibatchIdx, num_minibatches, str(datetime.now()), loss))
+                    logging.info("Completed minibatch %d / %d at time %s, Loss was %f" % (minibatchIdx, num_minibatches, str(datetime.now()), loss / FLAGS.batch_size))
                 tic = time.time()
 
                 mini_indices = list(all_indices[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size])
@@ -604,7 +612,7 @@ class QASystem(object):
 
 
 
-                
+                '''
                 f = open("grads.csv", 'w')
                 for var_name in self.grad_dict:
                     f.write(var_name)
@@ -612,9 +620,7 @@ class QASystem(object):
                         f.write(',' + str(grad))
                     f.write("\n")
                 f.close()
-
-
-
+                '''
 
             if epoch % FLAGS.print_every_num_epochs == 0:
                 scores = self.validate(session, dataset_val)
