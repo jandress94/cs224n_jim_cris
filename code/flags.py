@@ -2,21 +2,21 @@ import tensorflow as tf
 
 # model hyperparams
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
-tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
-tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
-tf.app.flags.DEFINE_integer("batch_size", 32, "Batch size to use during training.")
-tf.app.flags.DEFINE_integer("epochs", 2, "Number of epochs to train.")
+tf.app.flags.DEFINE_float("max_gradient_norm", 1000000.0, "Clip gradients to this norm.")
+tf.app.flags.DEFINE_float("dropout", 0.2, "Fraction of units randomly dropped on non-recurrent connections.")
+tf.app.flags.DEFINE_integer("batch_size", 40, "Batch size to use during training.")
+tf.app.flags.DEFINE_integer("epochs", 15, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("output_size", 750, "The output size of your model.")
 tf.app.flags.DEFINE_integer("embedding_size", 300, "Size of the pretrained vocabulary.")
 tf.app.flags.DEFINE_string("optimizer", "adam", "adam / sgd")
 tf.app.flags.DEFINE_boolean("use_drop_on_wv", True, "Whether to dropout the word vectors themselves")
-tf.app.flags.DEFINE_boolean("init_c_with_q", False, "Whether to feed the question representation in when initially computing the context representation")
+tf.app.flags.DEFINE_boolean("init_c_with_q", True, "Whether to feed the question representation in when initially computing the context representation")
 
 # printing / saving
 tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
-tf.app.flags.DEFINE_string("load_train_dir", "", "Training directory to load model parameters from to resume training (default: {train_dir}).")
+tf.app.flags.DEFINE_string("load_train_dir", "init_vars", "Training directory to load model parameters from to resume training (default: {train_dir}).")
 tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
 tf.app.flags.DEFINE_integer("print_every_num_epochs", 1, "How many iterations to do per print.")
 tf.app.flags.DEFINE_integer("print_times_per_epoch", 100, "How many times to print the minibatch number per epoch of training.")

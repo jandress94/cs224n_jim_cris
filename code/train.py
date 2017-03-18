@@ -154,18 +154,16 @@ FLAGS = get_flags()
                 
 
 def initialize_model(session, model, train_dir):
-    '''
     ckpt = tf.train.get_checkpoint_state(train_dir)
     v2_path = ckpt.model_checkpoint_path + ".index" if ckpt else ""
     if ckpt and (tf.gfile.Exists(ckpt.model_checkpoint_path) or tf.gfile.Exists(v2_path)):
         logging.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-        model.saver.restore(session, ckpt.model_checkpoint_path)
+        #model.saver.restore(session, ckpt.model_checkpoint_path)
+        tf.train.Saver().restore(session, ckpt.model_checkpoint_path)
     else:
         logging.info("Created model with fresh parameters.")
         session.run(tf.global_variables_initializer())
         logging.info('Num params: %d' % sum(v.get_shape().num_elements() for v in tf.trainable_variables()))
-    '''
-    session.run(tf.global_variables_initializer())
     return model
 
 
@@ -245,6 +243,61 @@ def main(_):
     logging.info("Building Model Graph")
     tf.set_random_seed(42)
     np.random.seed(43)
+    '''
+    logging.info("baseline")
+    reset_flags()
+    logging.info(vars(FLAGS))
+    
+    logging.info("no drop on word vectors")
+    reset_flags()
+    FLAGS.use_drop_on_wv = False
+    logging.info(vars(FLAGS))
+    
+    logging.info("init context with question")
+    reset_flags()
+    FLAGS.init_c_with_q = True
+    logging.info(vars(FLAGS))
+    
+    logging.info("grad norm = 10")
+    reset_flags()
+    FLAGS.max_gradient_norm = 10.0
+    logging.info(vars(FLAGS))
+    
+    logging.info("grad norm = 50")
+    reset_flags()
+    FLAGS.max_gradient_norm = 50.0
+    logging.info(vars(FLAGS))
+    
+    logging.info("learning rate = 0.1")
+    reset_flags()
+    FLAGS.learning_rate = 0.1
+    logging.info(vars(FLAGS))
+    
+    logging.info("learning rate = 0.0001")
+    reset_flags()
+    FLAGS.learning_rate = 0.0001
+    logging.info(vars(FLAGS))
+
+    logging.info("dropout = .1")
+    reset_flags()
+    FLAGS.dropout = 0.1
+    logging.info(vars(FLAGS))
+    
+    logging.info("dropout = 0.2")
+    reset_flags()
+    FLAGS.dropout = 0.2
+    logging.info(vars(FLAGS))
+    
+    logging.info("learning rate = 0.01")
+    reset_flags()
+    FLAGS.learning_rate = 0.01
+    logging.info(vars(FLAGS))
+    
+    logging.info("state size = 300")
+    reset_flags()
+    FLAGS.state_size = 300
+    logging.info(vars(FLAGS))
+    '''
 
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     decoder = Decoder(output_size=FLAGS.output_size)
@@ -273,93 +326,8 @@ def main(_):
         initialize_model(sess, qa, load_train_dir)
 
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
-
-        logging.info("baseline")
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        logging.info(vars(FLAGS))
         qa.train(sess, dataset_train, dataset_val, save_train_dir)
-        
-        logging.info("no drop on word vectors")
-        qa.reset()
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        FLAGS.use_drop_on_wv = False
-        logging.info(vars(FLAGS))
-        qa.train(sess, dataset_train, dataset_val, save_train_dir)
-
-        logging.info("init context with question")
-        qa.reset()
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        FLAGS.init_c_with_q = True
-        logging.info(vars(FLAGS))
-        qa.train(sess, dataset_train, dataset_val, save_train_dir)
-
-        logging.info("grad norm = 10")
-        qa.reset()
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        FLAGS.max_gradient_norm = 10.0
-        logging.info(vars(FLAGS))
-        qa.train(sess, dataset_train, dataset_val, save_train_dir)
-
-        logging.info("grad norm = 50")
-        qa.reset()
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        FLAGS.max_gradient_norm = 50.0
-        logging.info(vars(FLAGS))
-        qa.train(sess, dataset_train, dataset_val, save_train_dir)
-
-        logging.info("learning rate = 0.1")
-        qa.reset()
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        FLAGS.learning_rate = 0.1
-        logging.info(vars(FLAGS))
-        qa.train(sess, dataset_train, dataset_val, save_train_dir)
-
-        logging.info("learning rate = 0.0001")
-        qa.reset()
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        FLAGS.learning_rate = 0.0001
-        logging.info(vars(FLAGS))
-        qa.train(sess, dataset_train, dataset_val, save_train_dir)
-
-        logging.info("dropout = .1")
-        qa.reset()
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        FLAGS.dropout = 0.1
-        logging.info(vars(FLAGS))
-        qa.train(sess, dataset_train, dataset_val, save_train_dir)
-
-        logging.info("dropout = 0.2")
-        qa.reset()
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        FLAGS.dropout = 0.2
-        logging.info(vars(FLAGS))
-        qa.train(sess, dataset_train, dataset_val, save_train_dir)
-
-        logging.info("learning rate = 0.01")
-        qa.reset()
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        FLAGS.learning_rate = 0.01
-        logging.info(vars(FLAGS))
-        qa.train(sess, dataset_train, dataset_val, save_train_dir)
-
-        logging.info("state size = 300")
-        qa.reset()
-        initialize_model(sess, qa, load_train_dir)
-        reset_flags()
-        FLAGS.state_size = 300
-        logging.info(vars(FLAGS))
-        qa.train(sess, dataset_train, dataset_val, save_train_dir)
-        
+       
     sess.close()
 
 if __name__ == "__main__":

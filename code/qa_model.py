@@ -79,7 +79,9 @@ class Encoder(object):
             scope.reuse_variables()
             # = R(2, m, w_c, h)
             if FLAGS.init_c_with_q:
-                outputs_c, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, c_data, c_lens, output_states_q[0], output_states_q[1])
+                q_state_fw = tuple(tf.nn.dropout(tensor, 1 - dropout) for tensor in output_states_q[0])
+                q_state_bw = tuple(tf.nn.dropout(tensor, 1 - dropout) for tensor in output_states_q[1])
+                outputs_c, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, c_data, c_lens, q_state_fw, q_state_bw)
             else:
                 outputs_c, _ = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, c_data, c_lens, dtype = tf.float32)
 
