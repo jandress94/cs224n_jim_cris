@@ -10,7 +10,7 @@ import tensorflow as tf
 import numpy as np 
 from tqdm import tqdm
 
-from qa_model import Encoder, QASystem, Decoder
+from qa_model import Encoder, QASystem, SimpleLinearDecoder, AnswerPointerDecoder
 from os.path import join as pjoin
 from preprocessing.squad_preprocess import data_from_json, maybe_download, squad_base_url, \
     invert_map, tokenize, token_idx_map, load_train_data
@@ -23,105 +23,6 @@ from flags import *
 logging.basicConfig(level=logging.INFO)
 
 FLAGS = get_flags()
-
-
-# def prepare_dev(prefix, dev_filename, vocab):
-#     # Don't check file size, since we could be using other datasets
-#     dev_dataset = maybe_download(squad_base_url, dev_filename, prefix)
-
-#     dev_data = data_from_json(os.path.join(prefix, dev_filename))
-#     #context_data, question_data, question_uuid_data = read_dataset(dev_data, 'dev', vocab)
-#     #context_data, question_data, answer_data = data_for_hist(dev_data)
-#     context_data, question_data, answer_data = pad_dataset(dev_data, 'dev', vocab)
-
-#     #return context_data, question_data, question_uuid_data
-#     return context_data, question_data, answer_data
-
-# def read_dataset(dataset, tier, vocab):
-#     """Reads the dataset, extracts context, question, answer,
-#     and answer pointer in their own file. Returns the number
-#     of questions and answers processed for the dataset"""
-
-#     context_data = []
-#     query_data = []
-#     question_uuid_data = []
-
-#     for articles_id in tqdm(range(len(dataset['data'])), desc="Preprocessing {}".format(tier)):
-#         article_paragraphs = dataset['data'][articles_id]['paragraphs']
-#         for pid in range(len(article_paragraphs)):
-#             context = article_paragraphs[pid]['context']
-#             # The following replacements are suggested in the paper
-#             # BidAF (Seo et al., 2016)
-#             context = context.replace("''", '" ')
-#             context = context.replace("``", '" ')
-
-#             context_tokens = tokenize(context)
-
-#             qas = article_paragraphs[pid]['qas']
-#             for qid in range(len(qas)):
-#                 question = qas[qid]['question']
-#                 question_tokens = tokenize(question)
-#                 question_uuid = qas[qid]['id']
-
-#                 context_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in context_tokens]
-#                 question_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in question_tokens]
-
-#                 context_data.append(' '.join(context_ids))
-#                 query_data.append(' '.join(question_ids))
-#                 question_uuid_data.append(question_uuid)
-
-#     return context_data, query_data, question_uuid_data
-
-
-# def pad_dataset(dataset, tier, vocab):
-#     """Reads the dataset, extracts context, question, answer,
-#     and answer pointer in their own file. Returns the number
-#     of questions and answers processed for the dataset"""
-#     MAX_CONTEXT_LEN = 200
-#     MAX_QUESTION_LEN = 60
-#     zero_vector = '0'
-
-#     context_data = [] # list of pairs (padded paragraph, mask)
-#     query_data = []
-#     question_uuid_data = []
-
-#     for articles_id in tqdm(range(len(dataset['data'])), desc="Preprocessing {}".format(tier)):
-#         article_paragraphs = dataset['data'][articles_id]['paragraphs']
-#         for pid in range(len(article_paragraphs)):
-#             context = article_paragraphs[pid]['context']
-#             # The following replacements are suggested in the paper
-#             # BidAF (Seo et al., 2016)
-#             context = context.replace("''", '" ')
-#             context = context.replace("``", '" ')
-
-#             context_tokens = tokenize(context)
-
-#             qas = article_paragraphs[pid]['qas']
-#             for qid in range(len(qas)):
-#                 question = qas[qid]['question']
-#                 question_tokens = tokenize(question)
-#                 question_uuid = qas[qid]['id']
-
-#                 context_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in context_tokens]
-#                 question_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in question_tokens]
-
-#                 L = len(context_ids)
-#                 if L >= MAX_CONTEXT_LEN:
-#                     padded_context = context_ids[0 : MAX_CONTEXT_LEN]
-#                     mask_context = [True] * MAX_CONTEXT_LEN
-#                 else:
-#                     padded_context = context_ids + [zero_vector for _ in xrange(MAX_CONTEXT_LEN - L)]
-#                     mask_context = [True] * L + [False] * (MAX_CONTEXT_LEN - L)
-
-#                 L = len(question_ids)
-#                 padded_question = question_ids + [zero_vector for _ in xrange(MAX_QUESTION_LEN - L)]
-#                 mask_question = [True] * L + [False] * (MAX_QUESTION_LEN - L)
-
-#                 context_data.append((' '.join(padded_context), mask_context))
-#                 query_data.append((' '.join(padded_question), mask_question))
-#                 question_uuid_data.append(question_uuid)
-
-#     return context_data, query_data, question_uuid_data
 
 # def data_for_hist(dataset):
 #     context_data = []
@@ -166,19 +67,6 @@ def initialize_model(session, model, train_dir):
         logging.info('Num params: %d' % sum(v.get_shape().num_elements() for v in tf.trainable_variables()))
     return model
 
-
-# def initialize_vocab(vocab_path):
-#     if tf.gfile.Exists(vocab_path):
-#         rev_vocab = []
-#         with tf.gfile.GFile(vocab_path, mode="rb") as f:
-#             rev_vocab.extend(f.readlines())
-#         rev_vocab = [line.strip('\n') for line in rev_vocab]
-#         vocab = dict([(x, y) for (y, x) in enumerate(rev_vocab)])
-#         return vocab, rev_vocab
-#     else:
-#         raise ValueError("Vocabulary file %s not found.", vocab_path)
-
-
 def get_normalized_train_dir(train_dir):
     """
     Adds symlink to {train_dir} from /tmp/cs224n-squad-train to canonicalize the
@@ -202,105 +90,61 @@ def reset_flags():
     FLAGS.use_drop_on_wv = True
     FLAGS.init_c_with_q = False
 
+def select_test(test_num):
+    test_name = "DID NOT SET A VALID TEST"
+    reset_flags()
+
+    if test_num == 0:
+        test_name = "baseline"
+    elif test_num == 1:
+        test_name = "no drop on word vectors"
+        FLAGS.use_drop_on_wv = False
+    elif test_num == 2:
+        test_name = "init context with question"
+        FLAGS.init_c_with_q = True
+    elif test_num == 3:
+        test_name = "grad norm = 10"
+        FLAGS.max_gradient_norm = 10.0
+    elif test_num == 4:
+        test_name = "grad norm = 50"
+        FLAGS.max_gradient_norm = 50.0
+    elif test_num == 5:
+        test_name = "learning rate = 0.1"
+        FLAGS.learning_rate = 0.1
+    elif test_num == 6:
+        test_name = "learning rate = 0.0001"
+        FLAGS.learning_rate = 0.0001
+    elif test_num == 7:
+        test_name = "dropout = .1"
+        FLAGS.dropout = 0.1
+    elif test_num == 8:
+        test_name = "dropout = 0.2"
+        FLAGS.dropout = 0.2
+    elif test_num == 9:
+        test_name = "learning rate = 0.01"
+        FLAGS.learning_rate = 0.01
+    elif test_num == 10:
+        test_name = "state size = 300"
+        FLAGS.state_size = 300
+
+    logging.info(test_name)
+    logging.info(vars(FLAGS))
+
 def main(_):
-
-    # Do what you need to load datasets from FLAGS.data_dir
-    #dataset = None
-
-    # embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
-    # vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
-    # vocab, rev_vocab = initialize_vocab(vocab_path)
 
     logging.info("Loading training data")
     dataset_train = load_train_data(FLAGS.data_dir, isValidation = False)
     logging.info("Loading validation data")
     dataset_val = load_train_data(FLAGS.data_dir, isValidation = True)
-    # logging.info(question_data[0])
-    # logging.info(context_data[0])
-    # logging.info(answer_data[0])
-
-
-    # dev_dirname = os.path.dirname(os.path.abspath(FLAGS.data_dir))
-    # dev_filename = os.path.basename(FLAGS.data_dir)
-    # context_data, question_data, question_uuid_data = prepare_dev(dev_dirname, dev_filename, vocab)
-    # dataset = (context_data, question_data, question_uuid_data)
-
-    #plt.figure()
-    #plt.hist(context_data, bins=range(min(context_data), max(context_data) + 20, 20))
-    # print (context_data[0])
-    #plt.savefig('context_data.png')
-
-    #plt.figure()
-    #plt.hist(question_data, bins=range(min(question_data), max(question_data) + 2, 2))
-    # print (question_data[0])
-    #plt.savefig('question_data.png')
-
-    #plt.figure()
-    #plt.hist(question_uuid_data, bins=range(min(question_uuid_data), max(question_uuid_data ) + 2, 2))
-    #plt.savefig('answer_data_mean.png')
-
 
     logging.info("Building Model Graph")
     tf.set_random_seed(42)
     np.random.seed(43)
-    '''
-    logging.info("baseline")
-    reset_flags()
-    logging.info(vars(FLAGS))
     
-    logging.info("no drop on word vectors")
-    reset_flags()
-    FLAGS.use_drop_on_wv = False
-    logging.info(vars(FLAGS))
-    
-    logging.info("init context with question")
-    reset_flags()
-    FLAGS.init_c_with_q = True
-    logging.info(vars(FLAGS))
-    
-    logging.info("grad norm = 10")
-    reset_flags()
-    FLAGS.max_gradient_norm = 10.0
-    logging.info(vars(FLAGS))
-    
-    logging.info("grad norm = 50")
-    reset_flags()
-    FLAGS.max_gradient_norm = 50.0
-    logging.info(vars(FLAGS))
-    
-    logging.info("learning rate = 0.1")
-    reset_flags()
-    FLAGS.learning_rate = 0.1
-    logging.info(vars(FLAGS))
-    
-    logging.info("learning rate = 0.0001")
-    reset_flags()
-    FLAGS.learning_rate = 0.0001
-    logging.info(vars(FLAGS))
-
-    logging.info("dropout = .1")
-    reset_flags()
-    FLAGS.dropout = 0.1
-    logging.info(vars(FLAGS))
-    
-    logging.info("dropout = 0.2")
-    reset_flags()
-    FLAGS.dropout = 0.2
-    logging.info(vars(FLAGS))
-    
-    logging.info("learning rate = 0.01")
-    reset_flags()
-    FLAGS.learning_rate = 0.01
-    logging.info(vars(FLAGS))
-    
-    logging.info("state size = 300")
-    reset_flags()
-    FLAGS.state_size = 300
-    logging.info(vars(FLAGS))
-    '''
+    select_test(0)
 
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
-    decoder = Decoder(output_size=FLAGS.output_size)
+    decoder = AnswerPointerDecoder()
 
     qa = QASystem(encoder, decoder)
 
