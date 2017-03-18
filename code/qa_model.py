@@ -104,6 +104,8 @@ class Encoder(object):
             D = tf.concat([D, d_sent_tile], axis = 1)
 
             # = R(m, w_q + 1, 2h)
+            W_Q = tf.nn.dropout(W_Q, keep_prob = 1 - dropout)
+            b_Q = tf.nn.dropout(b_Q, keep_prob = 1 - dropout)
             Q = tf.tanh(tf.tensordot(Q_prime, W_Q, [[2], [0]]) + b_Q)
 
             # mask the entries associated with padding to zero
@@ -152,7 +154,7 @@ class Encoder(object):
 
 class Decoder(object):
 
-    def decode(self, knowledge_rep, c_mask = None):
+    def decode(self, knowledge_rep, dropout, c_mask = None):
         """
         Takes a representation of the encoded context / question.
         Should return two tensors which are probabilities of the start / end index
@@ -196,7 +198,7 @@ class AnswerPointerDecoder(Decoder):
 
         return pre_beta
 
-    def decode(self, knowledge_rep, c_mask = None):
+    def decode(self, knowledge_rep, dropout, c_mask = None):
         with vs.variable_scope("answer_pointer"):
             # = R(4h, l)
             V = tf.get_variable("V", [4 * FLAGS.state_size, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
@@ -208,7 +210,6 @@ class AnswerPointerDecoder(Decoder):
             v = tf.get_variable("v", [self.hidden_dim, 1], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
             # = R(1)
             c = tf.get_variable("c", [1], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
-            #self.lstm_cell = tf.contrib.rnn.LSTMBlockCell(2 * FLAGS.state_size)
             # = R(4h, l)
             W_i = tf.get_variable("W_i", [4 * FLAGS.state_size, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
             # = R(1, l)
@@ -222,36 +223,34 @@ class AnswerPointerDecoder(Decoder):
             # = R(1, l)
             b_c = tf.get_variable("b_c", [1, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
 
-        #TODO: Jim, should this be within the above scope?
+            # = R(m, w_c, 4h)
+            U = knowledge_rep
 
-        # = R(m, w_c, 4h)
-        U = knowledge_rep
+            # = R(m, l)
+            h_0 = tf.zeros([tf.shape(U)[0], self.hidden_dim], dtype = tf.float32)
 
-        # = R(m, l)
-        h_0 = tf.zeros([tf.shape(U)[0], self.hidden_dim], dtype = tf.float32)
+            # = R(m, w_c)
+            pre_beta_start = self.get_beta(U, h_0, V, W, b, v, c, c_mask)
+            beta_start = tf.nn.softmax(pre_beta_start)
 
-        # = R(m, w_c)
-        pre_beta_start = self.get_beta(U, h_0, V, W, b, v, c, c_mask)
-        beta_start = tf.nn.softmax(pre_beta_start)
+            # = R(m, 4h)
+            x = tf.squeeze(tf.matmul(tf.expand_dims(beta_start, 1), U))
 
-        # = R(m, 4h)
-        x = tf.squeeze(tf.matmul(tf.expand_dims(beta_start, 1), U))
-        #lstm_input.set_shape([None, 4 * FLAGS.state_size])
+            # = R(m, l)
+            i_1 = tf.sigmoid(tf.matmul(x, W_i) + b_i)
+            # = R(m, l)
+            o_1 = tf.sigmoid(tf.matmul(x, W_o) + b_o)
+            # = R(m, l)
+            c_1_tilde = tf.tanh(tf.matmul(x, W_c) + b_c)
+            # = R(m, l)
+            c_1 = i_1 * c_1_tilde
+            # = R(m, l)
+            h_1 = o_1 * tf.tanh(c_1)
+            h_1 = tf.nn.dropout(h_1, keep_prob = 1 - dropout)
+            # = R(m, w_c)
+            pre_beta_end = self.get_beta(U, h_1, V, W, b, v, c, c_mask)
 
-        # = R(m, l)
-        i_1 = tf.sigmoid(tf.matmul(x, W_i) + b_i)
-        # = R(m, l)
-        o_1 = tf.sigmoid(tf.matmul(x, W_o) + b_o)
-        # = R(m, l)
-        c_1_tilde = tf.tanh(tf.matmul(x, W_c) + b_c)
-        # = R(m, l)
-        c_1 = i_1 * c_1_tilde
-        # = R(m, l)
-        h_1 = o_1 * tf.tanh(c_1)
-        # = R(m, w_c)
-        pre_beta_end = self.get_beta(U, h_1, V, W, b, v, c, c_mask)
-
-        return pre_beta_start, pre_beta_end
+            return pre_beta_start, pre_beta_end
 
 class SimpleLinearDecoder(Decoder):
 
@@ -265,10 +264,8 @@ class SimpleLinearDecoder(Decoder):
 
         # = R(4h, 1)
         w = tf.get_variable("w", [4 * FLAGS.state_size, 1], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
-        # = R
-        #b = tf.get_variable("b", [1], tf.float64, tf.contrib.layers.xavier_initializer(dtype = tf.float64))
 
-        scores = tf.tensordot(U, w, [[2], [0]]) #+ b
+        scores = tf.tensordot(U, w, [[2], [0]])
 
         # = R(m, w_c)
         scores = tf.squeeze(scores)
@@ -280,7 +277,7 @@ class SimpleLinearDecoder(Decoder):
 
         return scores
 
-    def decode(self, knowledge_rep, c_mask = None):
+    def decode(self, knowledge_rep, dropout, c_mask = None):
         """
         takes in a knowledge representation
         and output a probability estimation over
@@ -379,8 +376,9 @@ class QASystem(object):
         to assemble your reading comprehension system!
         :return:
         """
-        U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.question_mask_placeholder, self.embeddings_c, self.context_len_placeholder, self.context_mask_placeholder, self.dropout_placeholder)
-        self.start_preds, self.end_preds = self.decoder.decode(U, self.context_mask_placeholder)
+        U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.question_mask_placeholder, 
+                                self.embeddings_c, self.context_len_placeholder, self.context_mask_placeholder, self.dropout_placeholder)
+        self.start_preds, self.end_preds = self.decoder.decode(U, self.dropout_placeholder, self.context_mask_placeholder)
 
     def setup_loss(self):
         """
@@ -627,11 +625,11 @@ class QASystem(object):
 
         question_data, context_data, answer_data = dataset_train
 
-        # scores = self.validate(session, dataset_val)
-        # logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
-        # if scores[0] < lowest_cost:
-        #     lowest_cost = scores[0]
-        #     self.saver.save(session, FLAGS.train_dir + "/model.weights") 
+        scores = self.validate(session, dataset_val)
+        logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
+        if scores[0] < lowest_cost:
+            lowest_cost = scores[0]
+            self.saver.save(session, FLAGS.train_dir + "/model.weights") 
 
         num_minibatches = int(np.ceil(len(question_data) / FLAGS.batch_size))
 
