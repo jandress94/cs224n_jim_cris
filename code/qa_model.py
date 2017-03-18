@@ -192,7 +192,7 @@ class AnswerPointerDecoder(Decoder):
         c_mask = c_mask[:, 0:-1]
         infs = tf.fill(tf.shape(c_mask), -np.inf)
         condition = tf.equal(c_mask, 0)
-        pre_beta = tf.where(condition, infs, pre_beta)
+        pre_beta = tf.where(condition, pre_beta, infs)
 
         return pre_beta
 
@@ -231,7 +231,7 @@ class AnswerPointerDecoder(Decoder):
         h_0 = tf.zeros([tf.shape(U)[0], self.hidden_dim], dtype = tf.float32)
 
         # = R(m, w_c)
-        pre_beta_start = self.get_beta(U, h_0)
+        pre_beta_start = self.get_beta(U, h_0, V, W, b, v, c, c_mask)
         beta_start = tf.nn.softmax(pre_beta_start)
 
         # = R(m, 4h)

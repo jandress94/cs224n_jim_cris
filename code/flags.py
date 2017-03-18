@@ -14,7 +14,7 @@ tf.app.flags.DEFINE_boolean("use_drop_on_wv", True, "Whether to dropout the word
 tf.app.flags.DEFINE_boolean("init_c_with_q", True, "Whether to feed the question representation in when initially computing the context representation")
 
 # printing / saving
-tf.app.flags.DEFINE_string("data_dir", "data/squad/super_small", "SQuAD directory (default ./data/squad)")
+tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
 tf.app.flags.DEFINE_string("load_train_dir", "init_vars", "Training directory to load model parameters from to resume training (default: {train_dir}).")
 tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
