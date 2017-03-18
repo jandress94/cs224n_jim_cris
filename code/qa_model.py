@@ -152,7 +152,7 @@ class Encoder(object):
 
 class Decoder(object):
 
-    def decode(self, knowledge_rep):
+    def decode(self, knowledge_rep, c_mask = None):
         """
         Takes a representation of the encoded context / question.
         Should return two tensors which are probabilities of the start / end index
@@ -162,59 +162,96 @@ class Decoder(object):
 
 class AnswerPointerDecoder(Decoder):
     def __init__(self):
-        with vs.variable_scope("answer_pointer"):
-            # = R(4h, 2h)
-            self.V = tf.get_variable("V", [4 * FLAGS.state_size, 2 * FLAGS.state_size], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
-            # = R(2h, 2h)
-            self.W = tf.get_variable("W", [2 * FLAGS.state_size, 2 * FLAGS.state_size], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
-            # = R(1, 2h)
-            self.b = tf.get_variable("b", [1, 2 * FLAGS.state_size], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
-            # = R(2h)
-            self.v = tf.get_variable("v", [2 * FLAGS.state_size, 1], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
-            # = R(1)
-            self.c = tf.get_variable("c", [1], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
-            self.lstm_cell = tf.contrib.rnn.LSTMBlockCell(2 * FLAGS.state_size)
+        # l
+        self.hidden_dim = 2 * FLAGS.state_size
+        
 
-    def get_beta(self, U, h_kMinus1):
+    def get_beta(self, U, h_kMinus1, V, W, b, v, c, c_mask):
         '''
         U = R(m, w_c, 4h)
-        h_kMinus1 = 2 X R(m, 2h)  but only want the second one     TODO: OR IS IT THE FIRST WHO KNOWS
+        h_kMinus1 = R(m, l)  but only want the second one
         '''
 
-        # = R(m, w_c, 2h)
-        t1 = tf.tensordot(U, self.V, [[2], [0]])
+        # = R(m, w_c, l)
+        t1 = tf.tensordot(U, V, [[2], [0]])
 
-        # = R(m, 2h)
-        t2 = tf.matmul(h_kMinus1[0], self.W) + self.b
-        # = R(m, w_c, 2h)
+        # = R(m, l)
+        t2 = tf.matmul(h_kMinus1, W) + b
+        # = R(m, w_c, l)
         t2 = tf.tile(tf.expand_dims(t2, 1), [1, tf.shape(U)[1], 1])
 
-        # = R(m, w_c, 2h)
+        # = R(m, w_c, l)
         F = tf.tanh(t1 + t2)
 
         # = R(m, w_c, 1)
-        beta = tf.tensordot(F, self.v, [[2], [0]]) + self.c
-        beta = tf.squeeze(tf.nn.softmax(beta))
-        return beta
+        pre_beta = tf.tensordot(F, v, [[2], [0]]) + c
+        # = R(m, w_c)
+        pre_beta = tf.squeeze(pre_beta)
+        # Apply mask:
+        # c_mask is R(m, w_c + 1). Remove the +1
+        c_mask = c_mask[:, 0:-1]
+        infs = tf.fill(tf.shape(c_mask), -np.inf)
+        condition = tf.equal(c_mask, 0)
+        pre_beta = tf.where(condition, infs, pre_beta)
 
-    def decode(self, knowledge_rep):
+        return pre_beta
+
+    def decode(self, knowledge_rep, c_mask = None):
+        with vs.variable_scope("answer_pointer"):
+            # = R(4h, l)
+            V = tf.get_variable("V", [4 * FLAGS.state_size, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+            # = R(l, l)
+            W = tf.get_variable("W", [self.hidden_dim, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+            # = R(1, l)
+            b = tf.get_variable("b", [1, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+            # = R(l, 1)
+            v = tf.get_variable("v", [self.hidden_dim, 1], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+            # = R(1)
+            c = tf.get_variable("c", [1], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+            #self.lstm_cell = tf.contrib.rnn.LSTMBlockCell(2 * FLAGS.state_size)
+            # = R(4h, l)
+            W_i = tf.get_variable("W_i", [4 * FLAGS.state_size, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+            # = R(1, l)
+            b_i = tf.get_variable("b_i", [1, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+            # = R(4h, l)
+            W_o = tf.get_variable("W_o", [4 * FLAGS.state_size, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+            # = R(1, l)
+            b_o = tf.get_variable("b_o", [1, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+            # = R(4h, l)
+            W_c = tf.get_variable("W_c", [4 * FLAGS.state_size, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+            # = R(1, l)
+            b_c = tf.get_variable("b_c", [1, self.hidden_dim], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
+
+        #TODO: Jim, should this be within the above scope?
+
         # = R(m, w_c, 4h)
         U = knowledge_rep
 
-        h_0 = self.lstm_cell.zero_state(tf.shape(U)[0], dtype = tf.float32)
+        # = R(m, l)
+        h_0 = tf.zeros([tf.shape(U)[0], self.hidden_dim], dtype = tf.float32)
 
-        # = R(m, 1, w_c)
-        beta_start = self.get_beta(U, h_0)
+        # = R(m, w_c)
+        pre_beta_start = self.get_beta(U, h_0)
+        beta_start = tf.nn.softmax(pre_beta_start)
 
         # = R(m, 4h)
-        lstm_input = tf.squeeze(tf.matmul(tf.expand_dims(beta_start, 1), U))
-        lstm_input.set_shape([None, 4 * FLAGS.state_size])
+        x = tf.squeeze(tf.matmul(tf.expand_dims(beta_start, 1), U))
+        #lstm_input.set_shape([None, 4 * FLAGS.state_size])
 
-        _, h_1 = self.lstm_cell(lstm_input, h_0)
+        # = R(m, l)
+        i_1 = tf.sigmoid(tf.matmul(x, W_i) + b_i)
+        # = R(m, l)
+        o_1 = tf.sigmoid(tf.matmul(x, W_o) + b_o)
+        # = R(m, l)
+        c_1_tilde = tf.tanh(tf.matmul(x, W_c) + b_c)
+        # = R(m, l)
+        c_1 = i_1 * c_1_tilde
+        # = R(m, l)
+        h_1 = o_1 * tf.tanh(c_1)
+        # = R(m, w_c)
+        pre_beta_end = self.get_beta(U, h_1, V, W, b, v, c, c_mask)
 
-        beta_end = self.get_beta(U, h_1)
-
-        return beta_start, beta_end
+        return pre_beta_start, pre_beta_end
 
 class SimpleLinearDecoder(Decoder):
 
@@ -243,7 +280,7 @@ class SimpleLinearDecoder(Decoder):
 
         return scores
 
-    def decode(self, knowledge_rep):
+    def decode(self, knowledge_rep, c_mask = None):
         """
         takes in a knowledge representation
         and output a probability estimation over
@@ -343,7 +380,7 @@ class QASystem(object):
         :return:
         """
         U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.question_mask_placeholder, self.embeddings_c, self.context_len_placeholder, self.context_mask_placeholder, self.dropout_placeholder)
-        self.start_preds, self.end_preds = self.decoder.decode(U)
+        self.start_preds, self.end_preds = self.decoder.decode(U, self.context_mask_placeholder)
 
     def setup_loss(self):
         """
@@ -393,10 +430,10 @@ class QASystem(object):
 
         input_feed[self.answers_placeholder] = a_data
 
-        c_masks = [[0] * L + [np.nan] * (len(c_data[0]) - L) + [0] for L in c_lens]
-        input_feed[self.context_mask_placeholder] = c_masks
-        q_masks = [[1] * L + [0] * (len(q_data[0]) - L) + [1] for L in q_lens]
-        input_feed[self.question_mask_placeholder] = q_masks
+        c_mask = [[0] * L + [np.nan] * (len(c_data[0]) - L) + [0] for L in c_lens]
+        input_feed[self.context_mask_placeholder] = c_mask
+        q_mask = [[1] * L + [0] * (len(q_data[0]) - L) + [1] for L in q_lens]
+        input_feed[self.question_mask_placeholder] = q_mask
 
         output_feed = [self.train_op, self.loss] + self.outputs
 
@@ -424,10 +461,10 @@ class QASystem(object):
         if a_data is not None:
             input_feed[self.answers_placeholder] = a_data
 
-        c_masks = [[0] * L + [np.nan] * (len(c_data[0]) - L) + [0] for L in c_lens]
-        input_feed[self.context_mask_placeholder] = c_masks
-        q_masks = [[1] * L + [0] * (len(q_data[0]) - L) + [1] for L in q_lens]
-        input_feed[self.question_mask_placeholder] = q_masks
+        c_mask = [[0] * L + [np.nan] * (len(c_data[0]) - L) + [0] for L in c_lens]
+        input_feed[self.context_mask_placeholder] = c_mask
+        q_mask = [[1] * L + [0] * (len(q_data[0]) - L) + [1] for L in q_lens]
+        input_feed[self.question_mask_placeholder] = q_mask
 
         output_feed = [self.start_preds, self.end_preds] 
 
