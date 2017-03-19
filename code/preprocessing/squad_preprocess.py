@@ -68,6 +68,12 @@ def load_train_data(data_dir, isValidation = False):
                 del context_data[i]
         print("There are %d examples remaining after deleting those with answers cutoff by max content length %d" % (len(question_data), FLAGS.max_context_len))
 
+    # Sorting data by context length, long to short
+    #sort_index = sorted(range(len(context_data)), key=lambda x:len(context_data[x]), reverse = True)
+    # Need to preserve them as lists rather then convert to np arrays
+    #question_data = [question_data[i] for i in sort_index]
+    #context_data = [context_data[i] for i in sort_index]
+    #answer_data = [answer_data[i] for i in sort_index]
     return question_data, context_data, answer_data
 
 def reporthook(t):

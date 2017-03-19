@@ -146,7 +146,7 @@ def main(_):
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     decoder = AnswerPointerDecoder()
 
-    qa = QASystem(encoder, decoder, len(dataset_train[0][0]))
+    qa = QASystem(encoder, decoder, len(dataset_train[0]))
 
     if not os.path.exists(FLAGS.log_dir):
         os.makedirs(FLAGS.log_dir)

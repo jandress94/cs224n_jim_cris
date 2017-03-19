@@ -511,9 +511,9 @@ class QASystem(object):
         start = 0
         end = 0
         for i in xrange(L):
-            for j in range(i, L):
+            for j in range(i, min([i+FLAGS.max_answer_len, L])):
                 prod = start_preds[i] * end_preds[j]
-                if prod > max_prod:
+                if (prod > max_prod):
                     max_prod = prod
                     start = i 
                     end = j 
@@ -647,35 +647,44 @@ class QASystem(object):
         for epoch in xrange(FLAGS.epochs):
             logging.info("epoch %d" % epoch)
 
+            num_buckets = int(np.ceil(num_minibatches / FLAGS.mixing_num ))
             all_indices = np.random.permutation(len(question_data))
+            minibatch_count = 0
+            for bucket in xrange(num_buckets):
+                bucket_indices = all_indices[bucket * FLAGS.mixing_num * FLAGS.batch_size : (bucket + 1) * FLAGS.mixing_num * FLAGS.batch_size]
 
-            for minibatchIdx in xrange(num_minibatches):
-                if minibatchIdx % max(int(num_minibatches / FLAGS.print_times_per_epoch), 1) == 0:
-                    logging.info("Completed minibatch %d / %d at time %s, Loss was %f" % (minibatchIdx, num_minibatches, str(datetime.now()), loss / FLAGS.batch_size))
-                tic = time.time()
-
-                mini_indices = list(all_indices[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size])
-
-                mini_question_data, question_lengths = padClip([question_data[ind] for ind in mini_indices], np.inf)
-                mini_context_data, context_lengths = padClip([context_data[ind] for ind in mini_indices], FLAGS.max_context_len)
-                mini_answer_data = [answer_data[ind] for ind in mini_indices]
-
-                _, loss = self.optimize(session, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
-
-                toc = time.time()
-                if minibatchIdx == 0:
-                    logging.info("Minibatch took %f secs" % (toc - tic))
-
-
-
+                sorted_bucket_indices = sorted(bucket_indices, key=lambda x:len(context_data[x]), reverse = True)
                 
-                f = open("grads.csv", 'w')
-                for var_name in self.grad_dict:
-                    f.write(var_name)
-                    for grad in self.grad_dict[var_name]:
-                        f.write(',' + str(grad))
-                    f.write("\n")
-                f.close()
+                num_minibatches_in_bucket = compute_num_minibatches(len(sorted_bucket_indices))
+
+                for minibatchIdx in xrange(num_minibatches_in_bucket):
+                    if minibatch_count % max(int(num_minibatches / FLAGS.print_times_per_epoch), 1) == 0:
+                        logging.info("Completed minibatch %d / %d at time %s, Loss was %f" % (minibatch_count, num_minibatches, str(datetime.now()), loss / FLAGS.batch_size))
+                    minibatch_count += 1
+                    tic = time.time()
+
+                    mini_indices = list(sorted_bucket_indices[(minibatchIdx) * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size])
+                    
+                    mini_question_data, question_lengths = padClip([question_data[ind] for ind in mini_indices], np.inf)
+                    mini_context_data, context_lengths = padClip([context_data[ind] for ind in mini_indices], FLAGS.max_context_len)
+                    mini_answer_data = [answer_data[ind] for ind in mini_indices]
+
+                    _, loss = self.optimize(session, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
+
+                    toc = time.time()
+                    if minibatchIdx == 0:
+                        logging.info("Minibatch took %f secs" % (toc - tic))
+
+
+
+                    
+                    f = open("grads.csv", 'w')
+                    for var_name in self.grad_dict:
+                        f.write(var_name)
+                        for grad in self.grad_dict[var_name]:
+                            f.write(',' + str(grad))
+                        f.write("\n")
+                    f.close()
 
 
 
