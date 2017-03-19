@@ -18,7 +18,7 @@ tf.app.flags.DEFINE_integer("max_answer_len", 15, "The maximum length of the ans
 
 
 # printing / saving
-tf.app.flags.DEFINE_string("data_dir", "data/squad/super_small", "SQuAD directory (default ./data/squad)")
+tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
 tf.app.flags.DEFINE_string("load_train_dir", "init_vars", "Training directory to load model parameters from to resume training (default: {train_dir}).")
 tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
