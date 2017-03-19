@@ -83,12 +83,12 @@ def get_normalized_train_dir(train_dir):
     return global_train_dir
 
 def reset_flags():
-    FLAGS.learning_rate = 0.001
+    FLAGS.learning_rate = 0.002
     FLAGS.state_size = 200
     FLAGS.dropout = 0.15
     FLAGS.max_gradient_norm = 1000000.0
     FLAGS.use_drop_on_wv = True
-    FLAGS.init_c_with_q = False
+    FLAGS.init_c_with_q = True
 
 def select_test(test_num):
     test_name = "DID NOT SET A VALID TEST"
@@ -146,7 +146,7 @@ def main(_):
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     decoder = AnswerPointerDecoder()
 
-    qa = QASystem(encoder, decoder)
+    qa = QASystem(encoder, decoder, len(dataset_train[0][0]))
 
     if not os.path.exists(FLAGS.log_dir):
         os.makedirs(FLAGS.log_dir)

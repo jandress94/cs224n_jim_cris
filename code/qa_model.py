@@ -19,6 +19,9 @@ logging.basicConfig(level=logging.INFO)
 
 FLAGS = get_flags()
 
+def compute_num_minibatches(num_ex):
+    return int(np.ceil(num_ex / FLAGS.batch_size))
+
 def get_optimizer(opt):
     if opt == "adam":
         optfn = tf.train.AdamOptimizer
@@ -301,7 +304,7 @@ class SimpleLinearDecoder(Decoder):
         return start_preds, end_preds
 
 class QASystem(object):
-    def __init__(self, encoder, decoder, *args):
+    def __init__(self, encoder, decoder, num_train_ex = None, *args):
         """
         Initializes your System
 
@@ -315,6 +318,8 @@ class QASystem(object):
 
         self.encoder = encoder
         self.decoder = decoder
+
+        self.learning_steps = tf.Variable(0, trainable = False)
 
         # ==== set up placeholder tokens ========
         # = R(m, w_q)
@@ -341,14 +346,18 @@ class QASystem(object):
             self.loss = self.setup_loss() # = add_loss_op()
 
         # ==== set up training/updating procedure ====
-        self.train_op = self.add_training_op()
+        self.train_op = self.add_training_op(num_train_ex)
 
     def reset(self):
         for name in self.grad_names:
             self.grad_dict[name] = []
 
-    def add_training_op(self):
-        optimizer = tf.train.AdamOptimizer(FLAGS.learning_rate) if FLAGS.optimizer == 'adam' else tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
+    def add_training_op(self, num_train_ex):
+        num_minibatches = float("inf") if num_train_ex is None else compute_num_minibatches(num_train_ex)
+
+        decayed_learning_rate = tf.train.exponential_decay(FLAGS.learning_rate, self.learning_steps, num_minibatches, FLAGS.learning_decay_rate)
+
+        optimizer = tf.train.AdamOptimizer(decayed_learning_rate) if FLAGS.optimizer == 'adam' else tf.train.GradientDescentOptimizer(decayed_learning_rate)
 
         grads = optimizer.compute_gradients(self.loss)
 
@@ -366,7 +375,7 @@ class QASystem(object):
             self.grad_names.append(grad[1].name)
             self.outputs.append(tf.norm(grad[0]))
 
-        train_op = optimizer.apply_gradients(grads)
+        train_op = optimizer.apply_gradients(grads, self.learning_steps)
         return train_op
 
     def setup_system(self):
@@ -529,7 +538,7 @@ class QASystem(object):
 
         question_data_val, context_data_val, answer_data_val = valid_dataset
 
-        num_minibatches = int(np.ceil(len(question_data_val) / FLAGS.batch_size))
+        num_minibatches = compute_num_minibatches(len(question_data_val))
 
         for minibatchIdx in xrange(num_minibatches):
             if minibatchIdx % max(int(num_minibatches / FLAGS.print_times_per_validate), 1) == 0:
@@ -631,7 +640,7 @@ class QASystem(object):
             lowest_cost = scores[0]
             self.saver.save(session, FLAGS.train_dir + "/model.weights") 
 
-        num_minibatches = int(np.ceil(len(question_data) / FLAGS.batch_size))
+        num_minibatches = compute_num_minibatches(len(question_data))
 
         loss = 0.0
 
