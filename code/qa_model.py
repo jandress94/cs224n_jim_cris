@@ -699,7 +699,7 @@ class QASystem(object):
                     _, loss = self.optimize(session, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
 
                     toc = time.time()
-                    if minibatchIdx == 0:
+                    if minibatch_count == 0:
                         logging.info("Minibatch took %f secs" % (toc - tic))
 
 
