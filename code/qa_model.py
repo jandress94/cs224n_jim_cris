@@ -44,7 +44,7 @@ class Encoder(object):
         self.size = size
         self.vocab_dim = vocab_dim
 
-    def encode(self, q_data, q_lens, q_mask, c_data, c_lens, c_mask, dropout):
+    def encode(self, q_data, q_lens, q_mask, c_data, c_lens, c_mask, c_words_in_q, dropout):
         """
         In a generalized encode function, you pass in your inputs,
         masks, and an initial
@@ -61,6 +61,16 @@ class Encoder(object):
         """
 
         with vs.variable_scope("quest_cont_encoder") as scope:
+            # Add the words in question mask onto the embeddings for the context
+            # = R(m, w_c, 1)
+            c_words_in_q = tf.expand_dims(c_words_in_q, -1)
+            # = R(m, w_c, FLAGS.embedding_size + 1)
+            c_data = tf.concat([c_data, c_words_in_q], axis = -1)
+
+            # Add an extra zero to the end of the q_data so that they are still the same dimension
+            # = R(m, w_q, FLAGS.embedding_size + 1)
+            q_data = tf.concat([q_data, tf.zeros([tf.shape(q_data)[0], tf.shape(q_data)[1], 1])], axis = -1)
+
             # = R(1, 1, 2h)
             q_sent = tf.get_variable("q_sentinel", [1, 1, 2*FLAGS.state_size], tf.float32, tf.random_normal_initializer())
             d_sent = tf.get_variable("d_sentinel", [1, 1, 2*FLAGS.state_size], tf.float32, tf.random_normal_initializer())
@@ -107,8 +117,8 @@ class Encoder(object):
             D = tf.concat([D, d_sent_tile], axis = 1)
 
             # = R(m, w_q + 1, 2h)
-            W_Q = tf.nn.dropout(W_Q, keep_prob = 1 - dropout)
-            b_Q = tf.nn.dropout(b_Q, keep_prob = 1 - dropout)
+            # W_Q = tf.nn.dropout(W_Q, keep_prob = 1 - dropout)
+            # b_Q = tf.nn.dropout(b_Q, keep_prob = 1 - dropout)
             Q = tf.tanh(tf.tensordot(Q_prime, W_Q, [[2], [0]]) + b_Q)
 
             # mask the entries associated with padding to zero
@@ -347,6 +357,8 @@ class QASystem(object):
         self.context_mask_placeholder = tf.placeholder(tf.int32, shape = (None, None))
         # = R(m, w_q + 1)
         self.question_mask_placeholder = tf.placeholder(tf.float32, shape = (None, None))
+        # = R(m, w_c)
+        self.words_in_q_mask_placeholder = tf.placeholder(tf.float32, shape = (None, None))
         # = R(m, 2)
         self.answers_placeholder = tf.placeholder(tf.int32, shape = (None, 2))
         # = R
@@ -398,8 +410,8 @@ class QASystem(object):
         to assemble your reading comprehension system!
         :return:
         """
-        U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.question_mask_placeholder, 
-                                self.embeddings_c, self.context_len_placeholder, self.context_mask_placeholder, self.dropout_placeholder)
+        U = self.encoder.encode(self.embeddings_q, self.question_len_placeholder, self.question_mask_placeholder, self.embeddings_c, 
+                            self.context_len_placeholder, self.context_mask_placeholder, self.words_in_q_mask_placeholder, self.dropout_placeholder)
         self.start_preds, self.end_preds = self.decoder.decode(U, self.dropout_placeholder, self.context_mask_placeholder)
 
     def setup_loss(self):
@@ -435,6 +447,17 @@ class QASystem(object):
             
         return tf.to_float(embeddings_q), tf.to_float(embeddings_c)
 
+    def get_c_words_in_q(self, q_data, c_data, c_lens):
+        results = []
+        for i in xrange(len(q_data)):
+            q_set = set(q_data[i])
+            q_set.discard(0)
+            q_set.discard(1)
+            q_set.discard(2)
+
+            results.append([1 if c_data[i][j] in q_set else 0 for j in xrange(len(c_data[i]))])
+        return results
+
     def optimize(self, session, q_data, q_lens, c_data, c_lens, a_data):
         """
         Takes in actual data to optimize your model
@@ -454,6 +477,8 @@ class QASystem(object):
         input_feed[self.context_mask_placeholder] = c_mask
         q_mask = [[1] * L + [0] * (len(q_data[0]) - L) + [1] for L in q_lens]
         input_feed[self.question_mask_placeholder] = q_mask
+
+        input_feed[self.words_in_q_mask_placeholder] = self.get_c_words_in_q(q_data, c_data, c_lens)
 
         output_feed = [self.train_op, self.loss] + self.outputs
 
@@ -486,7 +511,9 @@ class QASystem(object):
         q_mask = [[1] * L + [0] * (len(q_data[0]) - L) + [1] for L in q_lens]
         input_feed[self.question_mask_placeholder] = q_mask
 
-        output_feed = [self.start_preds, self.end_preds] 
+        input_feed[self.words_in_q_mask_placeholder] = self.get_c_words_in_q(q_data, c_data, c_lens)
+
+        output_feed = [self.start_preds, self.end_preds]
 
         if a_data is not None:
             output_feed.append(self.loss)
@@ -685,7 +712,7 @@ class QASystem(object):
                     _, loss = self.optimize(session, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
 
                     toc = time.time()
-                    if minibatchIdx == 0:
+                    if minibatch_count == 0:
                         logging.info("Minibatch took %f secs" % (toc - tic))
 
 
