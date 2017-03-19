@@ -9,7 +9,7 @@ tf.app.flags.DEFINE_integer("batch_size", 10, "Batch size to use during training
 tf.app.flags.DEFINE_integer("epochs", 15, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("output_size", 750, "The output size of your model.")
-tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
+tf.app.flags.DEFINE_integer("embedding_size", 300, "Size of the pretrained vocabulary.")
 tf.app.flags.DEFINE_string("optimizer", "adam", "adam / sgd")
 tf.app.flags.DEFINE_boolean("use_drop_on_wv", True, "Whether to dropout the word vectors themselves")
 tf.app.flags.DEFINE_boolean("init_c_with_q", True, "Whether to feed the question representation in when initially computing the context representation")
