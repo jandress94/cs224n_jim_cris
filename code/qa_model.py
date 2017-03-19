@@ -116,8 +116,10 @@ class Encoder(object):
             Q = q_mask * Q 
 
         with vs.variable_scope("coattention_encoder"):
+            # = R(2h, 2h)
+            W_attn = tf.get_variable("W_attn", [2*FLAGS.state_size, 2*FLAGS.state_size], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
             # = R(m, w_c + 1, w_q + 1)
-            L = tf.matmul(D, tf.transpose(Q, perm = [0, 2, 1]))
+            L = tf.matmul(tf.tensordot(D, W_attn, [[2], [0]]), tf.transpose(Q, perm = [0, 2, 1]))
             # Convert 0 to -inf for softmax
             infs = tf.fill(tf.shape(L), -np.inf)
             condition = tf.equal(L, 0)
@@ -197,7 +199,7 @@ class AnswerPointerDecoder(Decoder):
         c_mask = c_mask[:, 0:-1]
         infs = tf.fill(tf.shape(c_mask), -np.inf)
         condition = tf.equal(c_mask, 0)
-        pre_beta = tf.where(condition, pre_beta, infs)
+        pre_beta = tf.where(condition, infs, pre_beta)
 
         return pre_beta
 
@@ -293,13 +295,24 @@ class SimpleLinearDecoder(Decoder):
         :return:
         """
         # = R(m, w_c, 4h)
-        U = knowledge_rep
+        U_start = knowledge_rep
+
+        # c_mask is R(m, w_c + 1). Remove the +1
+        c_mask = c_mask[:, 0:-1]
+        c_lens = tf.reduce_sum(c_mask, axis = 1)
 
         with vs.variable_scope("start_pred_network"):
-            start_preds = self.project(U)
+            start_preds = self.project(U_start)
 
         with vs.variable_scope("end_pred_network"):
-            end_preds = self.project(U)
+            lstm_cell = tf.contrib.rnn.LSTMBlockCell(2 * FLAGS.state_size)
+
+            # = R(2, m, w_c, 4h)
+            U_end = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, U_start, c_lens, dtype = tf.float32)[0]
+            # = R(m, w_c, 4h)
+            U_end = concat_fw_bw(U_end)
+            U_end = tf.nn.dropout(U_end, keep_prob = 1 - dropout)
+            end_preds = self.project(U_end)
 
         return start_preds, end_preds
 
@@ -331,7 +344,7 @@ class QASystem(object):
         # = R(m)
         self.context_len_placeholder = tf.placeholder(tf.int32, shape = (None, ))
         # = R(m, w_c + 1)
-        self.context_mask_placeholder = tf.placeholder(tf.float32, shape = (None, None))
+        self.context_mask_placeholder = tf.placeholder(tf.int32, shape = (None, None))
         # = R(m, w_q + 1)
         self.question_mask_placeholder = tf.placeholder(tf.float32, shape = (None, None))
         # = R(m, 2)
@@ -437,7 +450,7 @@ class QASystem(object):
 
         input_feed[self.answers_placeholder] = a_data
 
-        c_mask = [[0] * L + [np.nan] * (len(c_data[0]) - L) + [0] for L in c_lens]
+        c_mask = [[1] * L + [0] * (len(c_data[0]) - L) + [1] for L in c_lens]
         input_feed[self.context_mask_placeholder] = c_mask
         q_mask = [[1] * L + [0] * (len(q_data[0]) - L) + [1] for L in q_lens]
         input_feed[self.question_mask_placeholder] = q_mask
@@ -468,7 +481,7 @@ class QASystem(object):
         if a_data is not None:
             input_feed[self.answers_placeholder] = a_data
 
-        c_mask = [[0] * L + [np.nan] * (len(c_data[0]) - L) + [0] for L in c_lens]
+        c_mask = [[1] * L + [0] * (len(c_data[0]) - L) + [1] for L in c_lens]
         input_feed[self.context_mask_placeholder] = c_mask
         q_mask = [[1] * L + [0] * (len(q_data[0]) - L) + [1] for L in q_lens]
         input_feed[self.question_mask_placeholder] = q_mask
