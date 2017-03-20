@@ -29,7 +29,7 @@ squad_base_url = "https://rajpurkar.github.io/SQuAD-explorer/dataset/"
 def padClip(datalist, maxMaxLen):
     clipPadData = []
     lengths = []
-
+    # TODO Optimize this
     maxLen = min(maxMaxLen, max([len(data) for data in datalist]))
 
     for data in datalist:

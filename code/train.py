@@ -83,6 +83,7 @@ def get_normalized_train_dir(train_dir):
     return global_train_dir
 
 def reset_flags():
+    pass
     # FLAGS.learning_rate = 0.002
     # FLAGS.state_size = 200
     # FLAGS.dropout = 0.15
@@ -144,7 +145,7 @@ def main(_):
     select_test(0)
 
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
-    decoder = SimpleLinearDecoder()
+    decoder = SimpleLinearDecoder() #AnswerPointerDecoder()
 
     qa = QASystem(encoder, decoder, len(dataset_train[0]))
 
