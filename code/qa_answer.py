@@ -15,7 +15,7 @@ import numpy as np
 from six.moves import xrange
 import tensorflow as tf
 
-from qa_model import Encoder, QASystem, AnswerPointerDecoder
+from qa_model import Encoder, QASystem, SimpleLinearDecoder
 from preprocessing.squad_preprocess import data_from_json, maybe_download, squad_base_url, \
     invert_map, tokenize, token_idx_map, load_train_data
 import qa_data
@@ -208,7 +208,7 @@ def main(_):
     # You must change the following code to adjust to your model
 
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
-    decoder = AnswerPointerDecoder()
+    decoder = SimpleLinearDecoder()
 
     qa = QASystem(encoder, decoder)
 

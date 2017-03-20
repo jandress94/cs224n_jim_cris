@@ -62,9 +62,9 @@ def initialize_model(session, model, train_dir):
         #model.saver.restore(session, ckpt.model_checkpoint_path)
         tf.train.Saver().restore(session, ckpt.model_checkpoint_path)
     else:
-        logging.info("Created model with fresh parameters.")
-        session.run(tf.global_variables_initializer())
-        logging.info('Num params: %d' % sum(v.get_shape().num_elements() for v in tf.trainable_variables()))
+    	logging.info("Created model with fresh parameters.")
+    	session.run(tf.global_variables_initializer())
+    	logging.info('Num params: %d' % sum(v.get_shape().num_elements() for v in tf.trainable_variables()))
     return model
 
 def get_normalized_train_dir(train_dir):
@@ -83,12 +83,7 @@ def get_normalized_train_dir(train_dir):
     return global_train_dir
 
 def reset_flags():
-    FLAGS.learning_rate = 0.002
-    FLAGS.state_size = 200
-    FLAGS.dropout = 0.15
-    FLAGS.max_gradient_norm = 1000000.0
-    FLAGS.use_drop_on_wv = True
-    FLAGS.init_c_with_q = True
+    pass
 
 def select_test(test_num):
     test_name = "DID NOT SET A VALID TEST"
@@ -166,7 +161,7 @@ def main(_):
         sess = tf.Session()
 
     with sess.as_default():
-        load_train_dir = get_normalized_train_dir(FLAGS.load_train_dir or FLAGS.train_dir)
+        load_train_dir = get_normalized_train_dir(FLAGS.train_dir or FLAGS.load_train_dir)
         initialize_model(sess, qa, load_train_dir)
 
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)

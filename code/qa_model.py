@@ -70,7 +70,7 @@ class Encoder(object):
             # = R(2h)
             b_Q = tf.get_variable("b_Q", [2*FLAGS.state_size], tf.float32, tf.contrib.layers.xavier_initializer(dtype = tf.float32))
 
-            lstm_cell = tf.contrib.rnn.LSTMBlockCell(FLAGS.state_size) #tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
+            lstm_cell = tf.contrib.rnn.LSTMBlockCell(FLAGS.state_size, forget_bias = 0) #tf.contrib.rnn.BasicLSTMCell(FLAGS.state_size)
 
             # apply dropout
             if FLAGS.use_drop_on_wv:
@@ -144,7 +144,7 @@ class Encoder(object):
             D_CD = tf.concat([D, C_D], axis = 2)
             D_CD.set_shape([None, None, 6*FLAGS.state_size])
 
-            lstm_cell = tf.contrib.rnn.LSTMBlockCell(2 * FLAGS.state_size) # tf.contrib.rnn.BasicLSTMCell(2 * FLAGS.state_size)
+            lstm_cell = tf.contrib.rnn.LSTMBlockCell(2 * FLAGS.state_size, forget_bias = 0) # tf.contrib.rnn.BasicLSTMCell(2 * FLAGS.state_size)
 
             # = R(2, m, w_c + 1, 2h)
             U = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, D_CD, c_lens, dtype = tf.float32)[0]
@@ -305,7 +305,7 @@ class SimpleLinearDecoder(Decoder):
             start_preds = self.project(U_start)
 
         with vs.variable_scope("end_pred_network"):
-            lstm_cell = tf.contrib.rnn.LSTMBlockCell(2 * FLAGS.state_size)
+            lstm_cell = tf.contrib.rnn.LSTMBlockCell(2 * FLAGS.state_size, forget_bias = 0)
 
             # = R(2, m, w_c, 4h)
             U_end = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, U_start, c_lens, dtype = tf.float32)[0]
@@ -685,7 +685,7 @@ class QASystem(object):
                     _, loss = self.optimize(session, mini_question_data, question_lengths, mini_context_data, context_lengths, mini_answer_data)
 
                     toc = time.time()
-                    if minibatchIdx == 0:
+                    if minibatch_count == 0:
                         logging.info("Minibatch took %f secs" % (toc - tic))
 
 
