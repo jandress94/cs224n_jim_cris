@@ -109,8 +109,9 @@ class Encoder(object):
             D = tf.concat([D, d_sent_tile], axis = 1)
 
             # = R(m, w_q + 1, 2h)
+            W_Q = tf.nn.dropout(W_Q, keep_prob = 1 - dropout)
+            b_Q = tf.nn.dropout(b_Q, keep_prob = 1 - dropout)
             Q = tf.tanh(tf.tensordot(Q_prime, W_Q, [[2], [0]]) + b_Q)
-            Q = tf.nn.dropout(Q, keep_prob = 1 - dropout)
 
             # mask the entries associated with padding to zero
             q_mask = tf.tile(tf.expand_dims(q_mask, -1), [1, 1, 2*FLAGS.state_size])

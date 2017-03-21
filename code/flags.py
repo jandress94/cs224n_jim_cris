@@ -11,7 +11,7 @@ tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("output_size", 750, "The output size of your model.")
 tf.app.flags.DEFINE_integer("embedding_size", 300, "Size of the pretrained vocabulary.")
 tf.app.flags.DEFINE_string("optimizer", "adam", "adam / sgd")
-tf.app.flags.DEFINE_boolean("use_drop_on_wv", True, "Whether to dropout the word vectors themselves")
+tf.app.flags.DEFINE_boolean("use_drop_on_wv", False, "Whether to dropout the word vectors themselves")
 tf.app.flags.DEFINE_boolean("init_c_with_q", True, "Whether to feed the question representation in when initially computing the context representation")
 tf.app.flags.DEFINE_integer("mixing_num", 20, "Number of minibatches to mix together when implementing bucketing.")
 tf.app.flags.DEFINE_integer("max_answer_len", 15, "The maximum length of the answer that our model outmuts, i.e. max(end - start + 1)")
@@ -31,7 +31,7 @@ tf.app.flags.DEFINE_string("embed_path", "./data/squad/glove.trimmed.", "Path to
 tf.app.flags.DEFINE_string("dev_path", "data/squad/dev-v1.1.json", "Path to the JSON dev set to evaluate against (default: ./data/squad/dev-v1.1.json)")
 
 # preprocessing
-tf.app.flags.DEFINE_integer("max_context_len", 400, "The length we will clip/pad a context paragraph to")
+tf.app.flags.DEFINE_integer("max_context_len", 200, "The length we will clip/pad a context paragraph to")
 # tf.app.flags.DEFINE_integer("question_len", 60, "The length we will clip/pad a question to")
 tf.app.flags.DEFINE_integer("padding_token", 0, "The symbol that is inserted in order to pad questions / contexts to the correct length")
 
