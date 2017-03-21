@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
 import time
 from datetime import datetime
 import logging
@@ -79,6 +80,7 @@ class Encoder(object):
 
             # = R(2, m, w_q, h)
             outputs_q, output_states_q = tf.nn.bidirectional_dynamic_rnn(lstm_cell, lstm_cell, q_data, q_lens, dtype = tf.float32)
+
             scope.reuse_variables()
             # = R(2, m, w_c, h)
             if FLAGS.init_c_with_q:
@@ -107,9 +109,8 @@ class Encoder(object):
             D = tf.concat([D, d_sent_tile], axis = 1)
 
             # = R(m, w_q + 1, 2h)
-            W_Q = tf.nn.dropout(W_Q, keep_prob = 1 - dropout)
-            b_Q = tf.nn.dropout(b_Q, keep_prob = 1 - dropout)
             Q = tf.tanh(tf.tensordot(Q_prime, W_Q, [[2], [0]]) + b_Q)
+            Q = tf.nn.dropout(Q, keep_prob = 1 - dropout)
 
             # mask the entries associated with padding to zero
             q_mask = tf.tile(tf.expand_dims(q_mask, -1), [1, 1, 2*FLAGS.state_size])
@@ -605,6 +606,12 @@ class QASystem(object):
 
         return f1, em
 
+    def save_model(self, session, epoch_num):
+        dir_name = FLAGS.train_dir + "/" + str(epoch_num + 1)
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name)
+        self.saver.save(session, dir_name + "/model.weights") 
+
     def train(self, session, dataset_train, dataset_val, train_dir):
         """
         Implement main training loop
@@ -637,7 +644,7 @@ class QASystem(object):
 
         self.saver = tf.train.Saver()
 
-        lowest_cost = np.inf 
+        # lowest_cost = np.inf 
 
         tic = time.time()
         params = tf.trainable_variables()
@@ -649,9 +656,7 @@ class QASystem(object):
 
         scores = self.validate(session, dataset_val)
         logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
-        if scores[0] < lowest_cost:
-            lowest_cost = scores[0]
-            self.saver.save(session, FLAGS.train_dir + "/model.weights") 
+        self.save_model(session, -1)
 
         num_minibatches = compute_num_minibatches(len(question_data))
 
@@ -705,6 +710,4 @@ class QASystem(object):
             if epoch % FLAGS.print_every_num_epochs == 0:
                 scores = self.validate(session, dataset_val)
                 logging.info("Validation cost is %f, F1 is %f, EM is %f" % scores)
-                if scores[0] < lowest_cost:
-                    lowest_cost = scores[0]
-                    self.saver.save(session, FLAGS.train_dir + "/model.weights") 
+                self.save_model(session, epoch)
