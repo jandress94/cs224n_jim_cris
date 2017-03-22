@@ -27,21 +27,7 @@ from preprocessing.squad_preprocess import padClip
 logging.basicConfig(level=logging.INFO)
 
 FLAGS = get_flags()
-'''
-tf.app.flags.DEFINE_float("learning_rate", 0.01, "Learning rate.")
-tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
-tf.app.flags.DEFINE_integer("batch_size", 10, "Batch size to use during training.")
-tf.app.flags.DEFINE_integer("epochs", 0, "Number of epochs to train.")
-tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
-tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
-tf.app.flags.DEFINE_integer("output_size", 750, "The output size of your model.")
-tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicates keep all.")
-tf.app.flags.DEFINE_string("train_dir", "train", "Training directory (default: ./train).")
-tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
-tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
-tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
-tf.app.flags.DEFINE_string("dev_path", "data/squad/dev-v1.1.json", "Path to the JSON dev set to evaluate against (default: ./data/squad/dev-v1.1.json)")
-'''
+
 def initialize_model(session, model, train_dir):
     ckpt = tf.train.get_checkpoint_state(train_dir)
     v2_path = ckpt.model_checkpoint_path + ".index" if ckpt else ""
@@ -121,7 +107,7 @@ def prepare_dev(prefix, dev_filename, vocab):
     return context_data, question_data, question_uuid_data, orig_contexts, context_lookup
 
 
-def generate_answers(sess, model, dataset, rev_vocab):
+def generate_answers(sess, model, dataset):
     """
     Loop over the dev or test dataset and generate answer.
 
@@ -144,7 +130,7 @@ def generate_answers(sess, model, dataset, rev_vocab):
 
     num_minibatches = int(np.ceil(len(question_data) / FLAGS.batch_size))
 
-    answers = {}
+    results = {}
     counter = 0
 
     for minibatchIdx in xrange(num_minibatches):
@@ -154,17 +140,32 @@ def generate_answers(sess, model, dataset, rev_vocab):
         mini_question_data, question_lengths = padClip(question_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], np.inf)
         mini_context_data, context_lengths = padClip(context_data[minibatchIdx * FLAGS.batch_size : (minibatchIdx + 1) * FLAGS.batch_size], np.inf)
         
-        #start_preds, end_preds = model.test(sess, mini_question_data, question_lengths, mini_context_data, context_lengths)
-        results = model.answer(sess, mini_question_data, question_lengths, mini_context_data, context_lengths)
-        
-        for result in results:
-            start, end = result
+        start_preds, end_preds = model.test(sess, mini_question_data, question_lengths, mini_context_data, context_lengths)
+
+        for i in xrange(start_preds.shape[0]):
             uuid = question_uuid_data[counter]
-            answers[uuid] = ' '.join(orig_contexts[context_lookup[uuid]][start : end + 1])
+            results[uuid] = (start_preds[i], end_preds[i])
             counter += 1
 
-    return answers
+    return results
 
+def max_agg(vect_list):
+    arr = np.array(vect_list)
+    return arr.max(axis = 0)
+
+def prod_agg(vect_list):
+    arr = np.array(vect_list)
+    #arr = np.log(arr)
+    #arr = np.sum(arr, axis = 0)
+    return np.prod(arr, axis = 0)
+
+def mean_agg(vect_list):
+    arr = np.array(vect_list)
+    return np.mean(arr, axis = 0)
+
+def median_agg(vect_list):
+    arr = np.array(vect_list)
+    return np.median(arr, axis = 0)
 
 def get_normalized_train_dir(train_dir):
     """
@@ -181,9 +182,38 @@ def get_normalized_train_dir(train_dir):
     os.symlink(os.path.abspath(train_dir), global_train_dir)
     return global_train_dir
 
+def predict_ensemble(sess, model, dataset, aggregate_fn):
+    all_model_results = {}
+    for model_dir in os.listdir(FLAGS.ensemble_dir):
+        train_dir = get_normalized_train_dir(FLAGS.ensemble_dir + "/" + model_dir)
+        initialize_model(sess, model, train_dir)
+
+        model_results = generate_answers(sess, model, dataset)
+        for key in model_results:
+            if key not in all_model_results:
+                all_model_results[key] = []
+            all_model_results[key].append(model_results[key])
+
+    context_data, question_data, question_uuid_data, orig_contexts, context_lookup = dataset
+
+    answers = {}
+    for uuid in all_model_results:
+        preds_list = all_model_results[uuid]
+
+        all_start_preds = [tup[0] for tup in preds_list]
+        all_end_preds = [tup[1] for tup in preds_list]
+
+        agg_start = aggregate_fn(all_start_preds)
+        agg_end = aggregate_fn(all_end_preds)
+
+        start, end = model.decode(agg_start, agg_end)
+        answers[uuid] = ' '.join(orig_contexts[context_lookup[uuid]][start : end + 1])
+
+    return answers
+
 
 def main(_):
-
+    print("start")
     vocab, rev_vocab = initialize_vocab(FLAGS.vocab_path)
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
@@ -214,14 +244,11 @@ def main(_):
     qa = QASystem(encoder, decoder)
 
     with tf.Session() as sess:
-        train_dir = get_normalized_train_dir(FLAGS.train_dir)
-        initialize_model(sess, qa, train_dir)
-        answers = generate_answers(sess, qa, dataset, rev_vocab)
+        answers = predict_ensemble(sess, qa, dataset, mean_agg)
 
         # write to json file to root dir
         with io.open('dev-prediction.json', 'w', encoding='utf-8') as f:
             f.write(unicode(json.dumps(answers, ensure_ascii=False)))
 
-
 if __name__ == "__main__":
-  tf.app.run()
+    tf.app.run()

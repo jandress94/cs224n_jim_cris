@@ -497,29 +497,20 @@ class QASystem(object):
 
         return outputs
 
-    def decode(self, session, test_x):
+    def softmax(self, x):
+        max_elem = np.max(x)
+        exp_x = np.exp(x - max_elem)
+        x = exp_x / np.sum(exp_x)
+        return x
+
+    def decode(self, start_preds, end_preds):
         """
         Returns the probability distribution over different positions in the paragraph
         so that other methods like self.answer() will be able to work properly
         :return:
         """
-        input_feed = {}
-        output_feed = []
-
-        outputs = session.run(output_feed, input_feed)
-
-        return outputs
-
-    def answer(self, start_preds, end_preds):
-
-        def softmax(x):
-            max_elem = np.max(x)
-            exp_x = np.exp(x - max_elem)
-            x = exp_x / np.sum(exp_x)
-            return x
-
-        start_preds = softmax(start_preds)
-        end_preds = softmax(end_preds)
+        start_preds = self.softmax(start_preds)
+        end_preds = self.softmax(end_preds)
 
         L = len(start_preds)
         max_prod = -1
@@ -528,12 +519,21 @@ class QASystem(object):
         for i in xrange(L):
             for j in range(i, min([i+FLAGS.max_answer_len, L])):
                 prod = start_preds[i] * end_preds[j]
-                if (prod > max_prod):
+                if prod > max_prod:
                     max_prod = prod
                     start = i 
                     end = j 
-
         return start, end
+
+    def answer(self, session, q_data, q_lens, c_data, c_lens):
+        '''
+        '''
+        start_preds, end_preds = self.test(session, q_data, q_lens, c_data, c_lens)
+
+        results = []
+        for i in xrange(start_preds.shape[0]):
+            results.append(self.decode(start_preds[i], end_preds[i]))
+        return results
 
     def validate(self, sess, valid_dataset):
         """
@@ -592,7 +592,7 @@ class QASystem(object):
         :return:
         """
 
-        start, end = self.answer(start_preds, end_preds)
+        start, end = self.decode(start_preds, end_preds)
 
         f1 = 0.
 

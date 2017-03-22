@@ -66,7 +66,12 @@ def load_train_data(data_dir, isValidation = False):
                 del answer_data[i]
                 del question_data[i]
                 del context_data[i]
-        print("There are %d examples remaining after deleting those with answers cutoff by max content length %d" % (len(question_data), FLAGS.max_context_len))
+            elif random.random() < FLAGS.ex_drop_rate:
+                del answer_data[i]
+                del question_data[i]
+                del context_data[i]
+
+        print("There are %d examples remaining after deleting those with answers cutoff by max content length %d and deleting %g of the data" % (len(question_data), FLAGS.max_context_len, FLAGS.ex_drop_rate))
 
     # Sorting data by context length, long to short
     #sort_index = sorted(range(len(context_data)), key=lambda x:len(context_data[x]), reverse = True)

@@ -133,8 +133,8 @@ def main(_):
     dataset_val = load_train_data(FLAGS.data_dir, isValidation = True)
 
     logging.info("Building Model Graph")
-    tf.set_random_seed(42)
-    np.random.seed(43)
+    #tf.set_random_seed(42)
+    #np.random.seed(43)
     
     select_test(0)
 

@@ -15,11 +15,12 @@ tf.app.flags.DEFINE_boolean("use_drop_on_wv", False, "Whether to dropout the wor
 tf.app.flags.DEFINE_boolean("init_c_with_q", True, "Whether to feed the question representation in when initially computing the context representation")
 tf.app.flags.DEFINE_integer("mixing_num", 20, "Number of minibatches to mix together when implementing bucketing.")
 tf.app.flags.DEFINE_integer("max_answer_len", 15, "The maximum length of the answer that our model outmuts, i.e. max(end - start + 1)")
-
+tf.app.flags.DEFINE_float("ex_drop_rate", 0.1, "Proportion of examples to drop.")
 
 # printing / saving
 tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
+tf.app.flags.DEFINE_string("ensemble_dir", "ensemble", "Directory to read each of the ensemble models from")
 tf.app.flags.DEFINE_string("load_train_dir", "train", "Training directory to load model parameters from to resume training (default: {train_dir}).")
 tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
 tf.app.flags.DEFINE_integer("print_every_num_epochs", 1, "How many iterations to do per print.")
